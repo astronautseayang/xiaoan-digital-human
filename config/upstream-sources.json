@@ -1,0 +1,18 @@
+{
+  "upstream_unity": {
+    "url": "https://github.com/LKZMuZiLi/human",
+    "commit": "c40e12f"
+  },
+  "gpt_sovits": {
+    "url": "https://github.com/RVC-Boss/GPT-SoVITS",
+    "commit": "b4570b876f5c086819ba84e3215472733c6a7b70"
+  },
+  "llama_cpp": {
+    "url": "https://github.com/ggml-org/llama.cpp",
+    "commit": "7170cad4d02f7907517613931840cbb2367399a3"
+  },
+  "univrm": {
+    "url": "https://github.com/vrm-c/UniVRM",
+    "tag": "v0.128.1"
+  }
+}

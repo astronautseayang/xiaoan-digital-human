@@ -1,0 +1,5 @@
+# Use the existing CUDA torch/torchaudio pair; do not replace it with CPU wheels.
+-c runtime-constraints.txt
+funasr==1.4.16
+modelscope==1.40.2
+pypinyin==0.55.0

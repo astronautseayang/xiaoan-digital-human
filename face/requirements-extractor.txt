@@ -1,0 +1,6 @@
+# MediaPipe 0.10.21 still exposes solutions.face_mesh.FaceMesh.
+# MediaPipe depends on opencv-contrib-python, a superset of opencv-python.
+# Install only this OpenCV wheel: both distributions provide the same cv2 module.
+mediapipe==0.10.21
+opencv-contrib-python==4.11.0.86
+numpy==1.26.4

@@ -1,0 +1,101 @@
+{
+  "source": "https://github.com/vrm-c/UniVRM/blob/v0.128.1/Tests/Models/Alicia_vrm-0.51/AliciaSolid_vrm-0.51.vrm",
+  "sha256": "237bb02efadf8c13a114af91dd8e860173081457dee87017e51011c448d05dc2",
+  "metadata": {
+    "title": "Alicia Solid",
+    "version": "1.10",
+    "author": "© DWANGO Co., Ltd.",
+    "contactInformation": "https://3d.nicovideo.jp/alicia/",
+    "reference": "",
+    "texture": 7,
+    "allowedUserName": "Everyone",
+    "violentUssageName": "Disallow",
+    "sexualUssageName": "Disallow",
+    "commercialUssageName": "Allow",
+    "otherPermissionUrl": "https://3d.nicovideo.jp/alicia/rule.html",
+    "licenseName": "Other",
+    "otherLicenseUrl": "https://3d.nicovideo.jp/alicia/rule.html"
+  },
+  "springs": [
+    {
+      "comment": "",
+      "stiffiness": 2,
+      "gravityPower": 0,
+      "gravityDir": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "dragForce": 0.7,
+      "center": -1,
+      "hitRadius": 0.02,
+      "bones": [
+        97,
+        99,
+        101,
+        113,
+        114
+      ],
+      "colliderGroups": [
+        3,
+        4,
+        5
+      ]
+    },
+    {
+      "comment": "",
+      "stiffiness": 1.6,
+      "gravityPower": 0,
+      "gravityDir": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "dragForce": 0.5,
+      "center": -1,
+      "hitRadius": 0.02,
+      "bones": [
+        81,
+        89,
+        104
+      ],
+      "colliderGroups": [
+        3,
+        4,
+        5
+      ]
+    },
+    {
+      "comment": "",
+      "stiffiness": 1,
+      "gravityPower": 0.05,
+      "gravityDir": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "dragForce": 0.8,
+      "center": -1,
+      "hitRadius": 0.05,
+      "bones": [
+        25,
+        27,
+        29,
+        31,
+        33,
+        35,
+        37,
+        39,
+        41,
+        43
+      ],
+      "colliderGroups": [
+        0,
+        1,
+        2,
+        3,
+        5
+      ]
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+Xiaoan Digital Human Noncommercial Source License 1.0
+Copyright (c) 2026 the respective project contributors.
+
+1. Scope. This license covers only original project material for which its
+contributors have authority to grant rights. It grants no rights to third-party
+code, model weights, avatars, recordings, fonts, trademarks or personal likenesses.
+Third-party material remains under its original terms; see THIRD_PARTY_NOTICES.md.
+
+2. Permission. Subject to these terms, you may read, download, run, reproduce,
+modify and redistribute covered material solely for noncommercial purposes,
+including personal learning, noncommercial research and teaching.
+
+3. No commercial use. Without separate prior written permission from the relevant
+rights holders, you may not use covered material or derivatives for commercial
+advantage or monetary compensation. Prohibited uses include selling or licensing
+the software, paid deployments or customization, commercial products or services,
+paid SaaS/API access, advertising-supported services, and internal use supporting
+a commercial business. A nonprofit label alone does not exempt commercial activity.
+
+4. Redistribution. Keep this license, attribution and third-party notices with
+copies or substantial portions, identify modifications, and distribute covered
+derivatives under these same noncommercial restrictions. You may not remove
+notices, falsely claim authorship or grant commercial rights you do not hold.
+Third-party terms are not replaced or restricted by this license.
+
+5. Reserved rights. All rights not expressly granted are reserved. Commercial
+permission for original project material does not waive any third-party license,
+personality, privacy, model or other rights. No patent or trademark license is
+expressly granted. Contributions must be submitted with authority to license them.
+
+6. Termination. Permission terminates automatically upon breach. Cessation of use
+alone does not excuse a prior breach or authorize continued redistribution.
+
+7. Disclaimer. THE MATERIAL IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE RIGHTS HOLDERS ARE NOT LIABLE FOR
+CLAIMS OR DAMAGES ARISING FROM USE. This is not a medical device or medical advice.
+
+This is a source-available noncommercial license, not an OSI-approved open-source
+license. Contact the repository owner via GitHub to discuss commercial permission;
+only the relevant rights holders can grant it.

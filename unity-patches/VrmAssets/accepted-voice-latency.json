@@ -1,0 +1,77 @@
+{
+  "implementation_commit": "806a5e9",
+  "build": {
+    "warnings": 0,
+    "errors": 0,
+    "result": "Succeeded"
+  },
+  "unity": {
+    "passed": true,
+    "voiceEnrollment": true,
+    "voiceReset": true,
+    "firstTextSeconds": 0.03185081481933594,
+    "firstAudioSeconds": 2.4116573333740234,
+    "frames": 345,
+    "maxFrameMs": 17.391204833984375,
+    "over33": 0,
+    "playbacks": 13
+  },
+  "benchmarks": [
+    {
+      "prompt": "你好，请用一句话介绍自己。",
+      "old_complete_seconds": 1.453857512002287,
+      "new_first_text_seconds": 0.20759227899907273,
+      "new_first_audio_seconds": 1.3304293889996188,
+      "new_complete_seconds": 2.044491497999843
+    },
+    {
+      "prompt": "我今天工作很累，能给我一些放松身心的建议吗？",
+      "old_complete_seconds": 30.961370209999586,
+      "new_first_text_seconds": 0.10533234700051253,
+      "new_first_audio_seconds": 2.165407167001831,
+      "new_complete_seconds": 9.351731793998624
+    },
+    {
+      "prompt": "请介绍如何培养每天阅读的习惯。",
+      "old_complete_seconds": 36.03293440199923,
+      "new_first_text_seconds": 0.10510075999991386,
+      "new_first_audio_seconds": 1.3369255449979391,
+      "new_complete_seconds": 5.9489626590002445
+    }
+  ],
+  "evidence": [
+    {
+      "path": "artifacts/validation/voice-latency/latency.json",
+      "sha256": "293dd1ac35840623a3cf9e39478922ef375c98aaf47d0c007193597a5043ef3d"
+    },
+    {
+      "path": "artifacts/validation/voice-latency/enrollment.json",
+      "sha256": "5db699566b20d61000bb6b6bc88f7d003890f3bca56fc222cc197e0a605aedca"
+    },
+    {
+      "path": "artifacts/validation/voice-latency/invalid-recordings.json",
+      "sha256": "ddf17f152ccb0ce31c721fa74aba0409f43e30650be739680ef3e6842b2f05f9"
+    },
+    {
+      "path": "artifacts/validation/voice-latency/enrolled-response.wav",
+      "sha256": "3797e3b6d707ddac7412b8bed703c7ea55d09a79c91f2b2360fea078e6a09454"
+    },
+    {
+      "path": "artifacts/validation/vrm-stage4/acceptance.json",
+      "sha256": "cf5641823993992dded8d33fbed1d170bb67a41722fd7ff5f1ae8688167782ba"
+    },
+    {
+      "path": "logs/vrm-integration-stage4-build.log",
+      "sha256": "09678794f568a374d019668ac2ed56e7dc129c6f839f23ffce6fc273f6460e1b"
+    },
+    {
+      "path": "logs/vrm-integration-stage4-client.log",
+      "sha256": "2f161a1bec3fcea7d1215d7a43df519c1c069c383d8c7e0edc67d2e8059fbbbb"
+    }
+  ],
+  "limitations": [
+    "Benchmark generations have different sampled wording; compare first response availability, not identical-text TTS speed.",
+    "Enrollment uses existing recorded WAV in automated tests, not a physical microphone recording.",
+    "Frame window covers cached real speech replay; excludes model load, generation, enrollment and 4K capture."
+  ]
+}

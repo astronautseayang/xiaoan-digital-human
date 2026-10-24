@@ -1,0 +1,37 @@
+# Runtime import dependencies for GPT-SoVITS v2 Chinese/English HTTP inference.
+# Keep the CUDA speech model in Torch; G2PW ONNX runs on CPU to conserve 8 GB VRAM.
+-c runtime-constraints.txt
+numpy
+scipy
+librosa==0.10.2
+ffmpeg-python
+transformers
+huggingface-hub
+pytorch-lightning
+peft
+torchmetrics
+rotary_embedding_torch
+x_transformers
+onnxruntime==1.22.1
+opencc-python-reimplemented
+cn2an
+pypinyin
+g2p_en
+wordsegment
+jieba_fast
+jieba
+split-lang
+fast_langdetect==1.1.0
+sentencepiece
+PyYAML
+psutil
+soundfile
+fastapi==0.115.12
+uvicorn
+httpx
+python-multipart
+faster-whisper==1.1.1
+
+matplotlib
+
+resampy

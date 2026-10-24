@@ -1,0 +1,200 @@
+# 低延迟回答与参考音色录入
+
+Unity 左上角卡片支持“录入我的音色”：自然朗读提示文字 5–10 秒，再点“停止并分析音色”。
+后端检查 PCM16 单声道 WAV、时长和音量，自动校正录音响度后由 ASR 识别参考内容，调用 GPT-SoVITS 生成试听。
+仅试听合成成功后才原子替换 config/voice.json；失败保留当前配置。界面显示识别内容，
+若内容不准或试听效果不佳可重新录入；“恢复默认音色”读取 config/voice-default.json；该默认配置由版本化的 gateway/default-voice.json 更新，当前使用 me.wav 英文女声及对应英文转写。
+参考文件保存在 assets/reference/enrolled/。这是预训练 GPT-SoVITS 的参考音频音色克隆，
+不训练新的模型；相似度和韵律受原始人声清晰度、参考转写和基础模型影响。
+当前音色独立于男女 VRM 模型。现有对话在创建时固定音色快照，新音色用于之后的对话。
+
+## API
+
+- POST /api/chat/jobs：与原 /api/chat 相同的 text、history，立即返回 id。
+- GET /api/chat/jobs/{id}：累计 text、已就绪 clips[{text,audio_url}]、done、error 和阶段耗时。
+  完成档案在 10 分钟后可清理；最多 2 个运行任务。客户端 150ms 轮询。
+- POST /api/voice/enroll：multipart file（5–10s、PCM16、mono、≤2MB），可选 text 精确转写；
+  省略 text 则运行 ASR。返回 text 音色名称、transcript、audio_url 试听地址、duration。
+- GET /api/voice：当前音色名称。
+- POST /api/voice/reset：恢复默认参考配置。
+- 原 /api/chat、/api/asr、/api/tts 保留兼容。网页旧客户端仍使用整段 /api/chat；
+  本轮低延迟播放和音色 UI 的入口是 Unity 客户端。
+
+流式 LLM 内容持续写入任务，按标点拆分短句，无标点长句在 36 字时截取 28 字。
+LLM 生成与单工作队列 TTS 重叠运行；Unity 下载与播放并发，下一片预取。
+所有片段经相同 AudioSource/uLipSync 播放；结束后组合完整 PCM 用于重播。
+文字首现、音频首片就绪、客户端实际播放是不同指标，均不能当成整段回答生成时间。
+
+## 验证
+
+`/home/yyy/miniforge3/envs/human-gsv-v2/bin/python scripts/validate-voice-latency.py`
+调用真实 LLM/TTS/ASR，保存 artifacts/validation/voice-latency 中的 JSON/WAV，
+检测坏文件保持、参考音频录入、后续 TTS 和恢复默认。该测试使用现有参考 WAV，
+不能视为已经用实体麦克风录入新人音色。测试会切换再恢复默认配置。
+`DISPLAY=:1 bash scripts/validate-vrm-integration.sh` 构建并验证 UI 发送、分段播放、
+录入试听、恢复默认、ASR、完整重播、五元音与表情隔离、帧时和 4K 截图。
+
+本次同提示前后实测存在采样措辞差异，不是同一文本的严格 TTS 对照。
+短招呼旧完整 1.45s，新首字 .21s、首段 1.33s；放松建议旧完整 30.96s，
+新首字 .11s、首段 2.17s；阅读建议旧完整 36.03s，新首字 .11s、首段 1.34s。
+这些是本机测量，不是延迟 SLA；长上下文、录入音色或并发负载仍会影响耗时。
+
+## 2026-10-23 文字停住与默认女声修复
+
+移除系统提示“不超过80字”，将普通与流式接口 max_tokens 从128提高到512。
+512是token上限，不是512个汉字；触发 finish_reason=length 时返回truncated=true，
+Unity明确提示发送“继续”。任务text_done区分LLM完成与后续语音尚在合成，
+界面文字区随新增文字滚动到底部，避免持续重置顶部而看不到新内容。
+短句先播及预取逻辑保留，因此更长回答无需等待全段合成后才显示/播放。
+
+默认音色现为“默认女声 · me.wav”，参考9.655秒LJSpeech女声；
+音频实际是英文，prompt_lang=en，参考转写由同目录demo-ljspeech.txt提供并以英语ASR核对。
+旧配置使用中文占位提示，与录音不匹配；现已修正。恢复默认按钮以服务返回的音色名称更新。
+已有自录参考文件保留。gateway启动更新默认配置，不覆盖用户后来选定的录入音色。
+
+实测长回答200字符，finish_reason=stop，未截断；整段语音任务52.978秒完成，
+说明文字结束后语音仍可能继续生成，不能把text_done当作音频全部就绪。
+测试入口 scripts/validate-text-default-voice.py；脚本test-chat-finish.py覆盖上游正常结束、
+长度截断标志和TTS失败后的任务结束，使用隔离的模拟上游，不作为真实语音证据。
+
+
+## 2026-10-23 语音首段延迟优化
+
+实际排查发现 GPT-SoVITS 本地 custom 配置为 device=cpu / is_half=false，
+尽管 RTX 4060 的 PyTorch CUDA 可用。scripts/start-tts.sh 现在每次启动检测 CUDA，
+在可用时写入 cuda + FP16；无 CUDA 时保留 CPU 路径并明确记录设备。
+此配置位于上游工作目录，因此必须由版本化启动脚本重放，避免重建配置后退回 CPU。
+不修改音色参考文件、模型权重、语速或采样质量参数；保留分句合成/预取及重复输出拦截。
+
+scripts/warm-tts.py 在服务启动后等待 HTTP 就绪，用当前音色真实合成短句，
+提前加载参考录音特征和中文文本推理缓存。预热只丢弃试听 WAV，不自动播放、不修改音色；
+结果写入 artifacts/validation/voice-latency/tts-warmup.json。
+服务的 openapi HTTP 就绪不代表预热完成；本机两次启动预热含启动耗时约 12～32 秒，
+与同时加载 Unity 等负载有关；
+若用户在预热完成前提问，仍可能等待冷启动。切换到新参考音色也可能产生首次特征计算。
+
+当前 CPU 基线实测：33 字问答文字首 token .055s，首段 WAV 10.633s；
+GPU 对同一文本的热态整段 WAV 合成 1.429/1.418s（输出 8.62s 音频）。
+GPU 第一次冷合成 7.574s，所以加入启动预热；预热后不需由首个正常问答承担该开销。
+不同真实问答首段 WAV 1.484/1.880/2.530s，分别为放松建议、自我介绍、阅读习惯；
+措辞由模型采样产生，不能当成同一文本的严格前后对照。
+证据 baseline-current.json、gpu-same-text.json、gpu-current.json 位于上述验证目录。
+这些时间均为服务端音频就绪时间，客户端实际播放另看 vrm-stage4/runtime.json。
+
+
+限制 OMP_NUM_THREADS/MKL_NUM_THREADS 为 4，避免语音前处理与 CPU 大模型、Unity 争抢线程。
+最终配置下同一 33 字文本的两次热合成 1.687/1.284s（gpu-limited-threads.json）。
+最终实际 1920×1080 Unity 集成测试通过：文字首现 .365s、首段开始播放 1.699s；
+另一轮识别后问答客户端文字 1.200s、开始播放 3.034s（该计时从提交识别文本开始，不含录音/ASR）。
+此前另一轮客户端首次播放曾为 6.295s，后续为 2.034s；文本处理与负载仍会导致波动，
+因此不将热态 1～2s 作为所有问题的开口保证。
+最终真实音频缓存重播采集 534 帧，最大帧间隔 17.990ms，无超过 33ms 帧；
+该帧时采集不包含网络/ASR/TTS 生成阶段，不能用它保证推理并发期间的所有帧。
+UI 发送、真实分段播放/完整重播、口型、眨眼、现有参考音频录入与恢复默认均通过；
+未使用实体麦克风录入新音色。证据 artifacts/validation/vrm-stage4/acceptance.json，
+logs/vrm-integration-stage4-client.log 与 logs/voice-gpu-integration-final.log。
+
+## 2026-10-23 轻声录入与合成响度校正
+
+gateway/audio_level.py 为 PCM16 WAV 提供固定增益归一化：按50ms窗口估计有效人声响度，
+忽略比最强窗口低20dB以上的停顿，目标有效段 RMS -20dBFS，峰值上限 -1dBFS，
+最大提升40dB。整段只用一个增益，保留停顿、时长、采样率和语音动态；峰值限制可能使
+高动态片段低于目标响度。它不是降噪或人声检测，无法修复噪声掩盖、失真或已经削波的录音。
+
+录入先校正再进行ASR、保存参考和试听，移除原整段RMS<180就拒绝的阈值，
+仍拒绝最强窗口RMS<16（约-66dBFS）的极弱录音。试听成功后才替换音色的流程保留。
+所有 synthesize 输出再次校正，覆盖普通TTS、整段/分段对话和录入试听；
+以前保存的小声参考也在新生成语音时受益，无需重新录入。已有缓存WAV不会重写。
+Unity播放器仍使用现有AudioSource/uLipSync，分句和预取流程保持。
+
+验证：PYTHONNOUSERSITE=1 PYTHONPATH=. /home/yyy/miniforge3/envs/human-gsv-v2/bin/python scripts/test-audio-level.py
+覆盖弱/正常/强信号、停顿、峰值、静音/坏文件、归一化后ASR与参考保存、试听失败回滚，5项通过。
+test-chat-finish.py 回归通过。网关已重启，/ready返回true。
+真实TTS采用当前参考人为衰减至3%音量（整段RMS -50.75dBFS），
+合成原始WAV也是-50.75dBFS，校正后-21.56dBFS，峰值-4.14dBFS，提升约29.2dB。
+2.46秒音频校正耗时0.541ms；参考校正前后-50.75/-21.46dBFS。
+真实网关API输出RMS -21.97dBFS、峰值-4.44dBFS，生成耗时2.217秒。
+以上RMS是含停顿的整段值，与有效段目标不同。证据 artifacts/validation/audio-level/results.json
+及同目录前后WAV；测试保留当前音色配置，未使用实体麦克风或验证扬声器主观响度。
+
+适老主动关怀及更新后的合成后处理参数见 [SENIOR_CARE.md](SENIOR_CARE.md)。当前 TTS 输出在原有参考音量校正之外，采用 0.82 倍语速与 FFmpeg EQ/压缩/响度处理；旧文档中关于仅作固定增益的描述适用于参考录音校正。
+
+
+## 离线唤醒入口
+
+待机改由 Sherpa-ONNX 轻量中文关键词模型持有麦克风，唤醒后交现有 ASR → 对话 → TTS 管线；Unity 播报期间抑制关键词，提示音使用独立 AudioSource，不驱动口型。部署、CPU测量、WebSocket协议和真实音频验收见 [WAKE.md](WAKE.md)。
+
+
+## 跟随播报的两行字幕（2026-10-24）
+
+- 底部字幕改由当前实际播放的 TTS 文本驱动，停止使用不断增长的完整回答滚到末尾。SpeechSubtitleTrack 在播放每段音频时绑定该段文字；语音预取、后文生成不会抢先覆盖字幕。
+- 按当前字体和实际宽度通过 Unity TextGenerator 划分两行页面。段内根据 AudioSource.timeSamples 进度和文字/标点权重翻页，段尾220ms静音不计入分页时长；播放停止或等待下一段时保留最后一页。每个语音段边界与实际音频一致；段内分页是时间估算，当前TTS未返回逐词对齐时间。
+- 合并整段回答供重播时同步保存各片段的实际起止时间，重播仍按原语音分段切字幕。手动中断、关怀抢占、开始新对话或收音时清理旧字幕。设置面板保留完整回答供查看。
+- SpeechSubtitleValidation（显式 -subtitle-sync-self-test）使用两段真实TTS长语音验证首次显示、播放位置换页、两行高度、下一段、合并重播时间线、播完保留、手动中断。证据 artifacts/validation/speech-subtitles/runtime.json、first-page.png、later-page.png；Unity构建日志logs/speech-subtitles-build.log、运行日志logs/speech-subtitles-runtime.log。
+
+## 简体中文与界面内中文输入（2026-10-24）
+
+- ASR保留zh识别并增加简体提示，结果经OpenCC t2s转换后再进行关怀指令分析、唤醒消息回传及聊天。聊天输入/历史、非流式回答和流式提交的每个文本片段统一简体，字幕、完整回答与TTS片段共用转换结果；语音合成入口同样转换。数字、英文缩写保留，不通过删除字符强行“中文化”。
+- 删除zenity外部输入流程。ChineseInputField在数字人设置抽屉内部处理拼音组合、候选、退格、1～3/空格选字、翻页与粘贴；默认直接拼音输入。回车有组合时选第一候选，无组合时发送问题。候选区遮住上方回答区，不超出窗口。输入框聚焦期间仅对Unity输入关闭系统IME，离开恢复；没有修改系统输入法默认配置。
+- 本地GET /api/input/pinyin调用系统libpinyin.so.13和已有中文词库，最多64字符、有界缓存、锁保护；每次独立instance，完整句候选选择后直接插入。POST /api/input/simplified将粘贴文字转简体。依赖gateway/requirements-chinese.txt（本机已安装），系统拼音词库路径/usr/lib/x86_64-linux-gnu/libpinyin/data。
+- scripts/test-chinese.py验证真实WAV识别、繁转简、聊天输入历史、完整/流式回答与TTS文本一致、拼音候选和非法输入；scripts/validate-chinese-input.py用真实X11键盘输入nihao（回车选字）、yeye（空格选字）、粘贴繁体，检查最终“你好爷爷今天天气很好。”、不误发送、不弹外部窗口。证据artifacts/validation/chinese-input/runtime.json与input.png。
+
+### 中文输出与输入声纹（2026-10-24）
+
+对话模型的完整回答及流式片段在显示和合成前均执行中文检查：常用英文词转中文，其余英文通过本地模型改写，再次检查失败时改用中文提示。英文片段等待完整句子，避免把一个英文词切成两次播报。保留数字与时间。默认继续使用本地千问，不新增云端调用。
+
+语音输入先经 90–7400 Hz 滤波和频域降噪，再用 Silero 检查人声；只有人声进入增益和 Whisper。低可信度识别片段不作为指令。唤醒录音和手动录音使用相同服务端流程。
+
+设置新增“录入识别声音”“只听我”。单人自然朗读 5–10 秒，清晰人声至少 3 秒。成功后自动开启声纹核对；按钮可关闭和重新开启。该功能与数字人的“录入我的音色”独立。初始未录入时保持关闭，不自动采集身份。
+
+声纹使用官方 Sherpa ONNX 3D-Speaker CAMPPlus 中文 16k 模型，本地文件 `models/speaker/campplus.onnx`。模型下载来源：`https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx`。录入仅保存归一化向量到 `config/input-speaker.json`（权限 0600），此接口不保存原始录入音频，查询接口不返回声纹向量。
+
+核对整段及重叠的两秒窗口，整段余弦门槛 0.55，窗口门槛 0.45。窗口门槛适当降低以容忍短片段和噪声。语音不足 0.8 秒时要求重说。整段不匹配或局部换人时拒绝提交对话。“知道了”关键词确认也核对声纹；“救命／跌倒／胸口疼”等紧急关键词保持可用。唤醒词自身不核对身份，因此旁人仍可能唤醒，但后续普通对话必须通过核对。
+
+这是声纹核对，不能从同时讲话中准确分离某一个人；多人重叠、远场和电视重放仍可能导致误拒绝或误接收。真实房间和本人声音需要实际试用，不能据少量测试录音承诺完全隔绝旁人。验证：`scripts/test-speaker-language.py` 使用临时档案测试噪声、本人加噪、不同声音、前后换人、录入失败保留档案及中文流式播报；不会修改实际用户声纹。
+
+## 2026-10-24 语音指令语境纠错
+
+`gateway/input_logic.py` 在本地按指令结构和拼音校正输入，供 `/api/asr`
+和完整/流式聊天共用。定位指令支持“订为/订位/定为到”等误识别；城市名
+仅在明确定位或天气查询中匹配内置常见城市词表，逐字处理多音字，忽略声调。
+例如“订为到行舟”→“定位到杭州”，“明天行舟天气”→“明天杭州天气”。
+已正确拼写的城市保持原名；“苏周”对应苏州/宿州时返回确认提示，不修改位置。
+未在词表内且没有唯一同音候选的城市沿用现有地理查询；不做任意近音猜测。
+普通聊天、带否定或多步骤的定位语句不匹配纠错定位语法。
+
+提醒仅在存在时间表达式时修正“替醒我/体醒我/题醒我/提酲我/提省我”，
+不修改时间数字、单位、事项或否定词；是否创建仍由 SQLite 提醒解析器决定。
+ASR 提示增加常用指令词及已选城市；语言仍固定中文，保留降噪、VAD、声纹过滤。
+识别返回 `text`（校正结果）、`raw_text`（原始转写）、`corrected`；原客户端兼容。
+音色录入使用 `care_commands=False`，保留原始转写，不改写参考音频文本。
+此层不调用 LLM 改写，不新增外部语音服务，不能补回录音中缺失的声音。
+
+验证：`scripts/test-input-logic.py` 覆盖同音字/多音字、城市歧义、否定与普通聊天、
+时间保留、ASR 返回原文、录入豁免、真实本地指令路由和隔离配置/SQLite 持久化。
+
+## 2026-10-24 上下文联系
+
+新增 `gateway/conversation_context.py`，完整和流式聊天均在真实功能路由前解析
+请求携带的上一轮用户/助手消息，不建立跨客户端共享的会话缓存。
+天气沿用工具回复中的城市和日期：“杭州今天天气”→“那明天呢”→“上海呢”→“要带伞吗”。
+定位成功后可说“换成宁波”；城市歧义提示后可直接回答候选城市名。
+提醒缺时间或事项时可分轮补齐；成功后可说“改成两分钟后”“取消这个提醒”。
+修改按上次回复的编号查询待执行记录，事项取自数据库，解析新时间成功后在同一事务内
+取消旧记录并写入新记录；失败保留原提醒；失效或无法唯一识别时明确告知。
+不从较早的无关话题恢复操作对象；缺少上下文时询问，避免交给模型虚构执行成功。
+
+Unity 会话历史由最近 4 轮增至 6 轮（12 条消息），模型输入文本预算由 2200
+增至 3600 字符（含本次输入，不含系统提示），仍保持模型 8192 上下文窗口。
+一般闲聊通过系统提示明确省略/指代、纠正和切换话题的规则。历史仅在当前会话内，
+客户端重新启动后清空，不宣称跨会话永久记忆。
+验证：`scripts/test-conversation-context.py`，天气日期/城市连续追问、定位切换、
+城市确认、提醒事务替换/取消/失效/失败保持、缺项补齐、话题切换、完整及流式路由。
+
+## 2026-10-24 SenseVoice 与简洁提醒
+
+主 ASR 升级为 FunASR SenseVoice-Small（GPU 优先，CPU 回退），兼容原 WAV
+接口并增加显式原始 PCM 上传，配置、离线缓存、重试和测试命令见 `gateway/ASR.md`。
+原 Whisper 仅保留其 VAD 工具依赖，唤醒 KWS 独立。
+提醒成功确认与列表去掉内部编号；上下文通过成功确认的时间+事项匹配唯一数据库
+记录，无法确定时询问，不使用“最近一条”全局猜测。支持“取消第一个提醒”。

@@ -1,0 +1,12 @@
+[Unit]
+Description=Digital human GPT-SoVITS v2 CUDA TTS
+After=network.target
+[Service]
+WorkingDirectory=/home/yyy/digital-human/GPT-SoVITS
+ExecStart=/home/yyy/digital-human/scripts/start-tts.sh
+Restart=on-failure
+RestartSec=15
+StandardOutput=append:/home/yyy/digital-human/logs/tts.log
+StandardError=append:/home/yyy/digital-human/logs/tts.log
+[Install]
+WantedBy=default.target

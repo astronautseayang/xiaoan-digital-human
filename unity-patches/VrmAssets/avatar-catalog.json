@@ -1,0 +1,32 @@
+{
+  "man": {
+    "file": "male.vrm",
+    "name": "優希 / Yūki (Ver05)",
+    "author": "jji-factory (BOOTH listing); embedded author: test",
+    "source": "",
+    "local_source": "assets/avatars/male.vrm",
+    "sha256": "34d5273657acebce1fd269df90f056a9e096e73734a0ff9b7955dc0957137ac4",
+    "profile": "artifacts/validation/face-stage2/man/face_params.json",
+    "license": "Author-specific VRM permissions; redistribution prohibited; not CC0",
+    "license_url": "https://booth.pm/ja/items/6266320",
+    "license_evidence": [
+      "https://booth.pm/ja/items/6266320"
+    ],
+    "license_note": "NOT INCLUDED. Obtain author permission before any redistribution or wider use. Import a legitimately licensed local VRM; update its checksum and profile.",
+    "metadata": {
+      "title": "syota0607",
+      "version": "",
+      "author": "test",
+      "contactInformation": "",
+      "reference": "",
+      "allowedUserName": "OnlyAuthor",
+      "violentUssageName": "Allow",
+      "sexualUssageName": "Allow",
+      "commercialUssageName": "Allow",
+      "otherPermissionUrl": "",
+      "licenseName": "Redistribution_Prohibited",
+      "otherLicenseUrl": "",
+      "texture": 11
+    }
+  }
+}

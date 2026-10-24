@@ -1,0 +1,15 @@
+[Unit]
+Description=Digital human HTTP gateway
+After=network.target human-llm.service
+[Service]
+WorkingDirectory=/home/yyy/digital-human
+Environment=PYTHONNOUSERSITE=1
+Environment=PYTHONPATH=
+ExecStart=/home/yyy/digital-human/scripts/start-gateway.sh
+TimeoutStartSec=900
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/home/yyy/digital-human/logs/gateway.log
+StandardError=append:/home/yyy/digital-human/logs/gateway.log
+[Install]
+WantedBy=default.target

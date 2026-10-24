@@ -1,0 +1,11 @@
+{
+  "model_id": "iic/SenseVoiceSmall",
+  "model_dir": "models/asr/SenseVoiceSmall",
+  "device": "auto",
+  "language": "zh",
+  "use_itn": true,
+  "cpu_threads": 4,
+  "retries": 1,
+  "hotwords": ["定位", "杭州", "提醒", "吃药", "闹钟", "小安", "喝水"],
+  "hotword_mode": "context_correction"
+}

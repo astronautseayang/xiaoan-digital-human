@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>本地数字人 · 语音交互</title>
+<style>body{font:17px system-ui;background:#101923;color:#e9f0f8;max-width:780px;margin:60px auto;padding:24px}h1{font-size:30px}#messages{min-height:220px;background:#192735;border-radius:16px;padding:24px;white-space:pre-wrap;line-height:1.8}textarea{box-sizing:border-box;width:100%;margin:20px 0;padding:16px;background:#192735;color:white;border:1px solid #536a80;border-radius:12px;font:inherit}button{padding:12px 22px;border:0;border-radius:10px;background:#8be3ca;color:#10251e;font:inherit;cursor:pointer}button:disabled{opacity:.5}#status{color:#acc0d3;margin:18px 0}audio{width:100%;margin-top:20px}</style>
+<h1>本地数字人 · 语音交互</h1><p>输入文字或录音，听取数字人的回复。</p>
+<div id="messages" role="log" aria-live="polite">你好，我们聊些什么？</div>
+<textarea id="text" rows="3" placeholder="输入你的问题" maxlength="2000"></textarea>
+<button id="send">发送</button> <button id="record">开始录音</button> <button id="replay" disabled>播放 / 重播回答</button>
+<div id="status" role="status">正在检查服务…</div><audio id="player" controls></audio>
+<script>
+const $=id=>document.getElementById(id);let history=[],recorder,chunks=[],busy=false;
+async function json(url,opt){const r=await fetch(url,opt);const d=await r.json();if(!r.ok)throw Error(d.detail||'请求失败');return d;}
+async function refresh(){try{const d=await json('/ready');$('status').textContent=d.ready?'服务已就绪':'服务正在准备：语音 '+(d.tts?'就绪':'等待')+'，对话 '+(d.llm?'就绪':'等待');}catch(e){$('status').textContent=e.message;}}
+$('send').onclick=async()=>{const text=$('text').value.trim();if(!text||busy)return;busy=true;$('send').disabled=true;$('status').textContent='正在思考并合成语音…';try{const d=await json('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,history:history.slice(-10)})});$('messages').textContent+='\n\n你：'+text+'\n助手：'+d.text;history.push({role:'user',content:text},{role:'assistant',content:d.text});$('text').value='';$('player').src=d.audio_url;$('replay').disabled=false;$('player').muted=false;$('player').volume=1;try{await $('player').play();$('status').textContent='正在播放回答…';}catch(e){console.warn('VOICE playback blocked',e);$('status').textContent='回答已生成，浏览器未允许自动播放，请点击「播放 / 重播回答」。';}}catch(e){$('status').textContent=e.message;}finally{busy=false;syncControls();}};
+$('record').onclick=async()=>{if(busy||!$('player').paused)return;if(recorder&&recorder.state==='recording'){recorder.stop();return;}try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});chunks=[];recorder=new MediaRecorder(stream);recorder.ondataavailable=e=>chunks.push(e.data);recorder.onstop=async()=>{stream.getTracks().forEach(t=>t.stop());$('record').textContent='开始录音';syncControls();$('status').textContent='正在识别录音…';try{const form=new FormData();form.append('file',new Blob(chunks,{type:recorder.mimeType}),'recording.webm');const d=await json('/api/asr',{method:'POST',body:form});$('text').value=d.text;$('status').textContent='识别完成，点击发送';}catch(e){$('status').textContent=e.message;}};recorder.start();syncControls();$('record').textContent='结束录音';}catch(e){$('status').textContent='无法使用麦克风：'+e.message;}};
+function syncControls(){const speaking=!$('player').paused;const recording=recorder&&recorder.state==='recording';$('send').disabled=busy||speaking||recording;$('record').disabled=busy||speaking;}
+$('replay').onclick=async()=>{try{$('player').currentTime=0;await $('player').play();$('status').textContent='正在播放回答…';}catch(e){$('status').textContent='播放失败：'+e.message;}syncControls();};
+$('player').addEventListener('play',syncControls);
+$('player').addEventListener('pause',syncControls);
+$('player').addEventListener('ended',()=>{syncControls();$('status').textContent='播放完成，可以继续提问。';});
+$('player').addEventListener('error',()=>{$('status').textContent='音频加载失败，请点击重播或重新发送。';syncControls();});
+refresh();
+</script></html>

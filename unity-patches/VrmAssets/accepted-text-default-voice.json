@@ -1,0 +1,65 @@
+{
+  "implementation_commit": "a16a003",
+  "build": {
+    "warnings": 0,
+    "errors": 0,
+    "result": "Succeeded"
+  },
+  "unity": {
+    "passed": true,
+    "answerAutoScroll": true,
+    "voiceEnrollment": true,
+    "voiceReset": true,
+    "firstTextSeconds": 0.19839859008789062,
+    "firstAudioSeconds": 3.0818023681640625,
+    "frames": 450,
+    "maxFrameMs": 17.47894287109375,
+    "over33": 0
+  },
+  "long_answer": {
+    "text": "春天公园的景色非常美丽，春天的公园里，花开满园，绿树成荫，鸟语花香，让人仿佛置身于大自然的怀抱中。公园里的小路弯弯曲曲，小桥流水，让人感到舒适惬意，仿佛在享受着大自然的馈赠。公园里的花坛、花盆、花架、花墙等，都装饰得栩栩如生，色彩斑斓，让人仿佛置身于花的世界中。公园里还有各种各样的植物，如樱花、桃花、杏花、梅花等，色彩各异，形态万千，让人仿佛置身于花的世界中。春天公园的景色非常迷人，让人流连忘返。",
+    "done": true,
+    "text_done": true,
+    "truncated": false,
+    "finish_reason": "stop",
+    "error": "",
+    "first_text_seconds": 0.226,
+    "first_audio_seconds": 4.592,
+    "elapsed_seconds": 52.978
+  },
+  "evidence": [
+    {
+      "path": "artifacts/validation/text-default-voice/long-answer.json",
+      "sha256": "8d147d57fc8a0a91db30bd508e8f80e3d09ff04b53af2b43c3b520506f317ee8"
+    },
+    {
+      "path": "artifacts/validation/text-default-voice/default-female.wav",
+      "sha256": "a3f9e449fc12d984f58dd58c013c90b059f29d252fa4f41233dc3d70d9852690"
+    },
+    {
+      "path": "artifacts/validation/vrm-stage4/acceptance.json",
+      "sha256": "090e6169b79946d2147b999c8bf4c33e06975514aac61fa4016a0adec7341bfa"
+    },
+    {
+      "path": "logs/text-limit-test.log",
+      "sha256": "d1b34b21b4e5f0339d981a5855a55ab7e7505f3fdf7529ab50d066e71beb1428"
+    },
+    {
+      "path": "logs/chat-finish-test.log",
+      "sha256": "22af89791ac3a9dbcd1a71a71362177290b21f7f7bb41dde34d715a93db78e14"
+    },
+    {
+      "path": "logs/vrm-integration-stage4-build.log",
+      "sha256": "eaf0e802b6b8405940490497dc096aba025d0c694a616b33f0c1df852ba4f568"
+    },
+    {
+      "path": "logs/vrm-integration-stage4-client.log",
+      "sha256": "b9234eb1b284e55b9be581965dd9a46b951ddf597701951b569a3984340518c8"
+    },
+    {
+      "path": "gateway/default-voice.json",
+      "sha256": "870c5d3e64b3839d9adf3ed6ea69bc570a2caf30470a1ceaf109c6232912e1ec"
+    }
+  ],
+  "scope": "450 raw frames during cached real speech replay; model loading, generation, recording, initial decode and 4K readback excluded. 500-character synthetic UI text verifies scrolling; separate real LLM generates 200 characters without truncation."
+}

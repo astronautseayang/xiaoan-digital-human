@@ -1,0 +1,14 @@
+[Unit]
+Description=Local photo identity and diffuse extraction
+After=network.target
+[Service]
+WorkingDirectory=/home/yyy/digital-human
+Environment=PYTHONNOUSERSITE=1
+Environment=PYTHONPATH=
+ExecStart=/home/yyy/digital-human/tools/face-env/bin/python /home/yyy/digital-human/face/face_feature_service.py
+Restart=on-failure
+RestartSec=3
+StandardOutput=append:/home/yyy/digital-human/logs/face-service.log
+StandardError=append:/home/yyy/digital-human/logs/face-service.log
+[Install]
+WantedBy=default.target
