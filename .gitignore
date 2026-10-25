@@ -24,3 +24,6 @@ config/voice-default.json
 config/speaker*.json
 config/companion.json
 deploy-env.sh
+
+config/input-speaker*.json
+config/*backup*.json

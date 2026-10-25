@@ -1,6 +1,7 @@
 {
-  "ref_audio_path": "assets/reference/me.wav",
-  "prompt_lang": "en",
-  "prompt_text": "Printing, in the only sense with which we are at present concerned, differs from most if not from all the arts and crafts represented in the Exhibition",
-  "label": "默认女声 · me.wav"
+  "ref_audio_path": "assets/reference/default-boy.wav",
+  "prompt_lang": "zh",
+  "prompt_text": "你好，我是小安，很高兴认识你。今天阳光很好，我们一起聊聊天吧。",
+  "label": "默认小男孩 · 小安",
+  "validate_speech": true
 }

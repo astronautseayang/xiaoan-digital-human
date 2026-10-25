@@ -95,6 +95,97 @@ class ReminderTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(datetime.fromisoformat(row['due']), self.now + timedelta(minutes=1))
                 command(self.engine, '取消全部提醒', self.now)
 
+    async def test_complete_relative_durations(self):
+        for duration, minutes in [('一个小时三十分钟', 90), ('两小时又十五分钟', 135),
+                                  ('1.5小时', 90), ('1．5小时', 90), ('半小时', 30),
+                                  ('半个小时', 30), ('一个半小时', 90), ('一小时半', 90)]:
+            for text in [duration+'后提醒我吃饭', '提醒我'+duration+'以后吃饭']:
+                with self.subTest(text=text):
+                    self.assertIn('已设置提醒', command(self.engine, text, self.now))
+                    row = self.engine.db.execute("SELECT * FROM reminders WHERE state='scheduled'").fetchone()
+                    self.assertEqual(row['task'], '吃饭')
+                    self.assertEqual(datetime.fromisoformat(row['due']), self.now+timedelta(minutes=minutes))
+                    command(self.engine, '取消全部提醒', self.now)
+
+    async def test_negative_and_multiple_times_never_commit(self):
+        for text in ['-1分钟后提醒我喝水', '负一小时后提醒我喝水', '−1.5小时后提醒我喝水',
+                     '一小时后和两小时后提醒我喝水', '一小时后今天三点提醒我喝水',
+                     '一天一小时后提醒我喝水', '一个小时零三十分钟后提醒我喝水']:
+            with self.subTest(text=text):
+                self.assertNotIn('已设置提醒', command(self.engine, text, self.now))
+                self.assertEqual(self.engine.db.execute('SELECT count(*) FROM reminders').fetchone()[0], 0)
+
+    async def test_midnight_is_not_noon(self):
+        now = self.now.replace(hour=10)
+        for time, expected in [('今天晚上十二点', '2026-10-25T00:00'),
+                               ('明天晚上十二点半', '2026-10-26T00:30'),
+                               ('明天凌晨十二点', '2026-10-25T00:00'),
+                               ('今天中午十二点', '2026-10-24T12:00'),
+                               ('每天晚上十二点', '2026-10-25T00:00')]:
+            with self.subTest(time=time):
+                self.assertIn('已设置提醒', command(self.engine, time+'提醒我休息', now))
+                row = self.engine.db.execute('SELECT due FROM reminders ORDER BY rowid DESC LIMIT 1').fetchone()
+                self.assertTrue(row['due'].startswith(expected), row['due'])
+                command(self.engine, '取消全部提醒', now)
+
+    async def test_explicit_clock_seconds_are_not_silently_discarded(self):
+        for clock in ('明天8点30分20秒', '明天八点三十分零五秒', '明天8点30秒', '明天8:30:20'):
+            for text in (clock+'提醒我关火', '提醒我'+clock+'关火'):
+                with self.subTest(text=text):
+                    self.engine.db.execute('DELETE FROM reminders')
+                    self.engine.db.commit()
+                    result = command(self.engine, text, self.now)
+                    self.assertNotIn('已设置提醒', result)
+                    self.assertEqual(self.engine.db.execute('SELECT count(*) FROM reminders').fetchone()[0], 0)
+        for text in ('提醒我明天8点做三十秒伸展', '明天8点提醒我做三十秒伸展'):
+            with self.subTest(text=text):
+                self.engine.db.execute('DELETE FROM reminders')
+                self.engine.db.commit()
+                result = command(self.engine, text, self.now)
+                self.assertIn('已设置提醒', result)
+                row = self.engine.db.execute("SELECT * FROM reminders WHERE state='scheduled'").fetchone()
+                self.assertEqual(row['task'], '做三十秒伸展')
+                self.assertEqual(datetime.fromisoformat(row['due']), self.now.replace(hour=8, minute=0)+timedelta(days=1))
+                command(self.engine, '取消全部提醒', self.now)
+
+    async def test_decimal_clocks_never_become_partial_times(self):
+        for clock in ('明天8.5点', '明天8．5点', '明天8点30.5分', '明天8:30.5', '明天8点.5分'):
+            for text in (clock+'提醒我关火', '提醒我'+clock+'关火'):
+                with self.subTest(text=text):
+                    self.engine.db.execute('DELETE FROM reminders')
+                    self.engine.db.commit()
+                    self.assertNotIn('已设置提醒', command(self.engine, text, self.now))
+                    self.assertEqual(self.engine.db.execute('SELECT count(*) FROM reminders').fetchone()[0], 0)
+        for text in ('明天8点提醒我测量1.5升水', '提醒我明天8点测量1.5升水'):
+            with self.subTest(text=text):
+                self.engine.db.execute('DELETE FROM reminders')
+                self.engine.db.commit()
+                self.assertIn('已设置提醒', command(self.engine, text, self.now))
+                row = self.engine.db.execute("SELECT * FROM reminders WHERE state='scheduled'").fetchone()
+                self.assertEqual(row['task'], '测量1.5升水')
+                self.assertEqual(datetime.fromisoformat(row['due']), self.now.replace(hour=8, minute=0)+timedelta(days=1))
+                command(self.engine, '取消全部提醒', self.now)
+
+    async def test_task_words_do_not_change_time_or_recurrence(self):
+        for task in ('看月亮', '记录每天步数', '准备下午的会议', '确认后天行程', '复习去年笔记'):
+            with self.subTest(task=task):
+                command(self.engine, '取消全部提醒', self.now)
+                result = command(self.engine, '提醒我明天8点' + task, self.now)
+                self.assertIn('已设置提醒', result)
+                row = self.engine.db.execute("SELECT * FROM reminders WHERE state='scheduled'").fetchone()
+                self.assertEqual(row['task'], task)
+                self.assertEqual(datetime.fromisoformat(row['due']), self.now.replace(hour=8, minute=0)+timedelta(days=1))
+                self.assertEqual(row['daily'], 0)
+                command(self.engine, '取消全部提醒', self.now)
+
+    async def test_relative_task_words_do_not_create_daily_reminder(self):
+        result = command(self.engine, '提醒我十分钟后记录每天步数', self.now)
+        self.assertIn('已设置提醒', result)
+        row = self.engine.db.execute("SELECT * FROM reminders WHERE state='scheduled'").fetchone()
+        self.assertEqual(row['daily'], 0)
+        self.assertEqual(row['task'], '记录每天步数')
+        self.assertEqual(datetime.fromisoformat(row['due']), self.now+timedelta(minutes=10))
+
     async def test_both_chat_paths_execute_tools_without_llm(self):
         previous = (module.ROOT, module.AUDIO, module.synthesize, getattr(module.app.state, 'care', None))
         module.ROOT, module.AUDIO, module.synthesize, module.app.state.care = self.root, self.root, self.synth, self.engine

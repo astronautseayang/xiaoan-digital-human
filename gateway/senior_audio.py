@@ -6,12 +6,15 @@ import os
 import subprocess
 import wave
 from gateway.audio_level import normalize_speech
+from gateway.voice_denoise import denoise_speech
 
 CLARITY_FILTER = ('equalizer=f=2450:t=o:w=1.4:g=2.5,'
                   'acompressor=threshold=0.125:ratio=3:attack=15:release=180:makeup=1.4')
 
 
-def process_senior_speech(data):
+def process_senior_speech(data, *, denoise=False):
+    if denoise:
+        data = denoise_speech(data)
     data = normalize_speech(data)
     ffmpeg = os.environ.get('HUMAN_FFMPEG', 'ffmpeg')
     # Measure after EQ and compression. A single dynamic loudnorm pass can

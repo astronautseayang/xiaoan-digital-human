@@ -2,8 +2,9 @@
 from dataclasses import dataclass
 import re
 from gateway.input_logic import interpret, city_candidates
+from gateway.reminders import RELATIVE_TIME, TIME_START
 
-TIME = r'(?:今天|明天|后天|每天)?(?:上午|下午|晚上|中午|早上)?[零〇一二两三四五六七八九十百\d]+(?:分钟后|小时后|[点:：](?:[零〇一二两三四五六七八九十\d]+分?|半)?)(?:的时候)?'
+TIME = rf'(?:{RELATIVE_TIME}|(?:今天|明天|后天|每天)?(?:上午|下午|晚上|中午|早上)?[零〇一二两三四五六七八九十百\d]+[点时:：](?:[零〇一二两三四五六七八九十\d]+分?|半|一刻|三刻)?)(?:的时候)?'
 
 @dataclass(frozen=True)
 class ContextInput:
@@ -38,7 +39,9 @@ def resolve(text, history=()):
             return ContextInput(text,'请从刚才列出的城市中选择，并说出或输入准确城市名。')
 
     key = re.search(r'编号([0-9a-f]{8})',answer)
-    reference = re.search(r'已(?:设置|修改)提醒：(.+?)，提醒您(.+?)。',answer)
+    # The task may itself contain full stops. Match through the tool reply's
+    # final terminator so a prefix task can never identify another reminder.
+    reference = re.search(r'已(?:设置|修改)提醒：(.+?)，提醒您(.+)。\s*$',answer, re.DOTALL)
     reminder = '提醒' in user or '提醒' in answer
     if reminder:
         change = re.fullmatch(r'(?:把(?:这个|刚才的)?提醒)?(?:改成|改为|改到|换成|换到)('+TIME+r')',short)
@@ -57,8 +60,14 @@ def resolve(text, history=()):
                 task = user.split('提醒我',1)[1]
                 if task:
                     return ContextInput(short+'提醒我'+task)
-            if '提醒您做什么' in answer and 1<=len(short)<=30 and not re.search(r'不要|取消|天气|定位|改成|吗|呢|[，,。！？]',short):
-                return ContextInput(user+short)
+            if '提醒您做什么' in answer:
+                # An explicit new time takes precedence over the pending one.
+                # Repeating “提醒我” supplies the task, not a second command.
+                task = re.sub(r'^提醒我', '', short)
+                if (1<=len(task)<=30 and '提醒我' not in task
+                        and not re.search(TIME_START, task)
+                        and not re.search(r'不要|不用|取消|删除|天气|定位|改成|吗|呢|[，,。！？]',task)):
+                    return ContextInput(user.replace('提醒我','',1).strip('，,。！？?!')+'提醒我'+task)
 
     # Factual replies provide the city and day used by the tool, including
     # temporary cross-city queries that do not change the saved home location.

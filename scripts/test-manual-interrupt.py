@@ -1,6 +1,7 @@
 """Cancellation drops late ASR results and stops generation with its TTS worker."""
 import asyncio
 import tempfile
+import time
 from pathlib import Path
 from gateway import app as module
 from gateway.wake import WakeService
@@ -51,7 +52,7 @@ async def main():
         module.app.state.client = Client()
         module.synthesize = synthesize
         key = 'cancel-test'
-        job = {'text':'','clips':[],'done':False}
+        job = {'text':'','clips':[],'done':False,'created':time.monotonic()}
         module.jobs[key] = job
         task = asyncio.create_task(module.run_chat_job(job,module.ChatRequest(text='测试'),{}))
         module.job_handles[key] = task

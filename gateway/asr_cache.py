@@ -15,6 +15,10 @@ MODEL_ID = 'iic/SenseVoiceSmall'
 
 def config(root):
     data = json.loads((Path(root)/'config/asr.json').read_text())
+    if not isinstance(data, dict):
+        raise ValueError('ASR 配置须为JSON对象')
+    if not isinstance(data.get('model_dir'), str) or not data['model_dir'].strip():
+        raise ValueError('ASR model_dir 须为非空模型目录')
     if data.get('model_id') != MODEL_ID:
         raise ValueError('当前 ASR 后端仅支持 iic/SenseVoiceSmall')
     if data.get('device') not in ('auto','cpu','cuda','cuda:0'):
@@ -26,11 +30,11 @@ def config(root):
         raise ValueError('ASR 热词须为不超过128项、每项1到32字的字符串列表')
     if data.get('language') != 'zh' or not isinstance(data.get('use_itn'),bool):
         raise ValueError('ASR 需要中文 language=zh 和布尔值 use_itn')
-    if not isinstance(data.get('cpu_threads'),int) or not 1<=data['cpu_threads']<=16:
+    if type(data.get('cpu_threads')) is not int or not 1<=data['cpu_threads']<=16:
         raise ValueError('ASR cpu_threads 须在1到16之间')
-    if not isinstance(data.get('retries'),int) or not 0<=data['retries']<=2:
+    if type(data.get('retries')) is not int or not 0<=data['retries']<=2:
         raise ValueError('ASR retries 须在0到2之间')
-    return data
+    return {**data, 'hotwords': words}
 
 
 def sha(path):

@@ -1,24 +1,40 @@
 """Shared senior companion wording and a persistent, explicit form of address."""
 import json
+import logging
 import re
+import uuid
 
 SALUTATIONS = ('您', '爷爷', '奶奶')
+log = logging.getLogger('human.companion')
 
 
 def salutation_for(root):
     path = root / 'config/companion.json'
-    if not path.exists():
+    try:
+        settings = json.loads(path.read_text())
+        if not isinstance(settings, dict):
+            raise ValueError('Expected companion settings object')
+        value = settings.get('salutation', '您')
+    except FileNotFoundError:
         return '您'
-    value = json.loads(path.read_text()).get('salutation', '您')
+    except (OSError, ValueError):
+        log.warning('Invalid companion settings; using neutral address', exc_info=True)
+        return '您'
     return value if value in SALUTATIONS else '您'
 
 
 def save_salutation(root, value):
     path = root / 'config/companion.json'
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix('.tmp')
-    temporary.write_text(json.dumps({'salutation': value}, ensure_ascii=False, indent=2) + '\n')
-    temporary.replace(path)
+    temporary = path.with_suffix('.' + uuid.uuid4().hex + '.tmp')
+    try:
+        temporary.write_text(json.dumps({'salutation': value}, ensure_ascii=False, indent=2) + '\n')
+        temporary.replace(path)
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            log.warning('Could not remove temporary companion settings %s', temporary, exc_info=True)
 
 
 def greeting(root, text):
@@ -32,6 +48,10 @@ def respectful_reply(text, value):
     text = re.sub(r'(^|[。！？!?，,\n])([ \t]*)(?:好孩子|乖孩子|小朋友|小宝贝|宝贝|乖宝宝|宝宝|爷爷|奶奶)(?=[，,。！!？?呀啊哦乖]|$)',
                   lambda m: m[1] + m[2] + address, text)
     text = re.sub(r'(?:你真是|您真是|你是|您是)(?:一个|个)?(?:好孩子|乖孩子)', '您很用心', text)
+    # A greeting followed by a standalone neutral address reads unnaturally
+    # (including after replacing an unselected family address above).
+    text = re.sub(r'^([ \t]*)(?:你好|您好)[，, \t]*您(?=[，,。！!？?呀啊哦]|$)',
+                  lambda m: m[1] + '您好', text)
     return text
 
 
@@ -40,6 +60,10 @@ def address_reply(text, value):
     if value == '您' or not text.strip():
         return text
     text = text.lstrip(' \n\t“"「')
+    # Move a greeting's existing address to the front instead of prefixing
+    # a second one. Require an address boundary to preserve family topics.
+    text = re.sub(r'^(?:你好|您好)[，, \t]*(?:爷爷|奶奶)(?=[，,。！!？?]|$)',
+                  value + '，您好', text, count=1)
     # Apply the explicitly selected address even if the small local LLM omits it.
     if re.match(r'^(爷爷|奶奶)', text):
         return re.sub(r'^(爷爷|奶奶)', value, text, count=1)

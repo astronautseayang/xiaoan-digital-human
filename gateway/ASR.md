@@ -26,6 +26,24 @@ PYTHONNOUSERSITE=1 PYTHONPATH=. /home/yyy/miniforge3/envs/human-gsv-v2/bin/pytho
 `input_notice`、`care_command`。客户端调用和后续 `/api/chat`、`/api/chat/jobs`
 保持兼容；识别不会自行提交重复聊天。
 
+单次录音最长 30 秒，按解码后的音频长度检查。超长录音返回 HTTP 200、空 `text`
+及 `input_notice=录音超过30秒，请缩短后重新录制。`，不继续识别或执行指令。
+网页显示时长提示，录音仍需用户手动停止。解码最多读取前 31 秒以判断超限，
+在降噪之前检查时长，避免滤镜略微缩短音频后漏过边界。
+降噪输出按解码后的帧数补齐/裁齐，保持录音时长，避免正好五秒的声纹录入
+因滤镜缩短约25ms而被误判为不足五秒。声纹录入仍需通过人声及一致性检查。
+
+WAV 中声明了长度的数据块必须完整，截断文件返回空 `text` 和
+`input_notice=录音数据不完整，请重新录制。`，不识别剩余片段。
+兼容管道生成的 WAV 使用 `0xffffffff` 表示未知数据长度；这种输入无法仅凭
+长度字段判断是否缺失尾部。WebM、Ogg、MP3 继续使用原解码流程。
+
+网页录音采用 `POST /api/asr?execute_commands=false`：继续做输入声纹检查及
+指令语境纠错，只把识别文字填入可编辑输入框，不自动触发紧急求助或关怀确认。
+`execute_commands` 默认 `true`，保留离线唤醒等现有入口行为。
+该选项与录入音色使用的 `care_commands=false` 不同，后者同时跳过声纹验证和
+指令纠错。网页转写后的“发送”仍使用普通对话流程，不代替专用关怀确认入口。
+
 - WAV 保留原接口，也接受文件名 `.pcm`/`.raw` 或 Content-Type `audio/pcm`、
   `audio/x-pcm` 的 16 kHz、16-bit little-endian、单声道 PCM 缓冲。这里处理
   一次话语的音频缓冲，并非 WebSocket 实时逐帧 ASR。原本地麦克风话语缓存不变。

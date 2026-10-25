@@ -70,11 +70,97 @@ class ContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('还没有设置提醒',result)
         self.assertEqual(self.care.db.execute("SELECT count(*) FROM reminders WHERE state='scheduled'").fetchone()[0],1)
 
+    async def test_punctuated_task_reference_never_changes_prefix_reminder(self):
+        for action in ('取消这个提醒','改成后天8点'):
+            with self.subTest(action=action):
+                self.care.db.execute('DELETE FROM reminders');self.care.db.commit()
+                await module.local_reply('明天8点提醒我喝水')
+                first='明天8点提醒我喝水。然后散步'
+                answer=await module.local_reply(first)
+                self.assertIn('已设置提醒',answer)
+                prefix=self.care.db.execute("SELECT * FROM reminders WHERE task='喝水'").fetchone()
+                result=await module.local_reply(action,history(first,answer))
+                self.assertIn('已取消1条' if action.startswith('取消') else '已修改提醒',result)
+                unchanged=self.care.db.execute('SELECT * FROM reminders WHERE id=?',(prefix['id'],)).fetchone()
+                self.assertEqual(dict(prefix),dict(unchanged))
+                if action.startswith('取消'):
+                    row=self.care.db.execute("SELECT * FROM reminders WHERE task='喝水。然后散步'").fetchone()
+                    self.assertEqual(row['state'],'cancelled')
+                else:
+                    rows=self.care.db.execute("SELECT * FROM reminders WHERE task='喝水。然后散步' AND state='scheduled'").fetchall()
+                    self.assertEqual(len(rows),1)
+                    self.assertEqual((datetime.fromisoformat(rows[0]['due'])-datetime.fromisoformat(prefix['due'])).days,1)
+                    cancelled=await module.local_reply('取消这个提醒',history(action,'爷爷，'+result))
+                    self.assertIn('已取消1条',cancelled)
+                    self.assertEqual(self.care.db.execute("SELECT count(*) FROM reminders WHERE task='喝水。然后散步' AND state='scheduled'").fetchone()[0],0)
+                    self.assertEqual(self.care.db.execute('SELECT state FROM reminders WHERE id=?',(prefix['id'],)).fetchone()[0],'scheduled')
+
     async def test_pending_reminder_missing_time_and_task(self):
         answer=await module.local_reply('提醒我喝水');self.assertIn('具体时间',answer)
         follow=await module.local_reply('两分钟后',history('提醒我喝水',answer));self.assertIn('已设置提醒',follow);self.assertIn('喝水',follow)
         answer=await module.local_reply('三分钟后提醒我');self.assertIn('做什么',answer)
         self.assertIn('吃药',await module.local_reply('吃药',history('三分钟后提醒我',answer)))
+
+    async def test_pending_hour_reminder_repeated_command(self):
+        for first, second in [('一个小时后提醒我', '提醒我吃饭'),
+                              ('一个小时之后提醒我', '请提醒我吃饭。'),
+                              ('提醒我一个小时以后', '吃饭')]:
+            with self.subTest(first=first, second=second):
+                self.care.db.execute('DELETE FROM reminders');self.care.db.commit()
+                answer=await module.local_reply(first)
+                self.assertIn('提醒您做什么',answer)
+                self.assertEqual(self.care.db.execute('SELECT count(*) FROM reminders').fetchone()[0],0)
+                started=datetime.now(self.care.zone)
+                follow=await module.local_reply(second,history(first,answer))
+                self.assertIn('已设置提醒',follow)
+                rows=self.care.db.execute('SELECT * FROM reminders').fetchall()
+                self.assertEqual(len(rows),1);self.assertEqual(rows[0]['task'],'吃饭')
+                delay=(datetime.fromisoformat(rows[0]['due'])-started).total_seconds()
+                self.assertTrue(3598<=delay<=3602,delay)
+
+    async def test_pending_reminder_explicit_new_time_and_isolation(self):
+        first='一个小时后提醒我';answer=await module.local_reply(first)
+        pending=history(first,answer)
+        await module.local_reply('两分钟后提醒我吃饭',pending)
+        row=self.care.db.execute('SELECT * FROM reminders').fetchone()
+        self.assertEqual(row['task'],'吃饭')
+        self.assertLess((datetime.fromisoformat(row['due'])-datetime.now(self.care.zone)).total_seconds(),121)
+        count=self.care.db.execute('SELECT count(*) FROM reminders').fetchone()[0]
+        for text in ['不要提醒我吃饭','取消提醒','今天天气怎么样']:
+            await module.local_reply(text,pending)
+        await module.local_reply('提醒我吃饭')  # Another session has no pending time.
+        await module.local_reply('提醒我吃饭',history('讲个故事','从前有座山。'))
+        self.assertEqual(self.care.db.execute('SELECT count(*) FROM reminders').fetchone()[0],count)
+
+    async def test_compound_duration_pending_and_change(self):
+        first='一个小时三十分钟后提醒我'
+        answer=await module.local_reply(first)
+        self.assertIn('提醒您做什么',answer)
+        started=datetime.now(self.care.zone)
+        follow=await module.local_reply('提醒我吃饭',history(first,answer))
+        self.assertIn('已设置提醒',follow)
+        row=self.care.db.execute("SELECT * FROM reminders WHERE state='scheduled'").fetchone()
+        self.assertEqual(row['task'],'吃饭')
+        self.assertAlmostEqual((datetime.fromisoformat(row['due'])-started).total_seconds(),5400,delta=2)
+        changed=await module.local_reply('改成半个小时后',history('提醒我吃饭',follow))
+        self.assertIn('已修改提醒',changed)
+        rows=self.care.db.execute("SELECT * FROM reminders WHERE state='scheduled'").fetchall()
+        self.assertEqual(len(rows),1)
+        self.assertAlmostEqual((datetime.fromisoformat(rows[0]['due'])-started).total_seconds(),1800,delta=2)
+
+    async def test_pending_reminder_complete_and_streaming(self):
+        first='一个小时后提醒我';answer=await module.local_reply(first)
+        req=module.ChatRequest(text='提醒我吃饭',history=history(first,answer))
+        with patch.object(module,'AUDIO',self.root),patch.object(module,'synthesize',self.synth):
+            result=await module.chat(req)
+            self.assertIn('提醒您吃饭',result['text'])
+            self.care.db.execute('DELETE FROM reminders');self.care.db.commit()
+            job={'text':'','clips':[],'done':False,'text_done':False,'error':'','truncated':False}
+            await module.run_chat_job(job,req,{})
+            self.assertFalse(job['error']);self.assertIn('提醒您吃饭',job['text'])
+            self.assertTrue(job['clips']);self.assertTrue(job['done'])
+            rows=self.care.db.execute('SELECT * FROM reminders').fetchall()
+            self.assertEqual(len(rows),1);self.assertEqual(rows[0]['task'],'吃饭')
 
     async def test_topic_change_and_no_cross_session_memory(self):
         self.assertTrue(resolve('那明天呢').reply)

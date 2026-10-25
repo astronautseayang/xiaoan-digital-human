@@ -8,9 +8,13 @@ class Response:
  async def __aexit__(self,*args):pass
  def raise_for_status(self):pass
  async def aiter_lines(self):
+  yield 'data: '+json.dumps({'choices':[], 'usage':{'completion_tokens':0}})
   for choice in [{'delta':{'content':'这是完整测试内容。'},'finish_reason':None},{'delta':{},'finish_reason':self.reason}]:
    yield 'data: '+json.dumps({'choices':[choice]})
-  yield 'data: [DONE]'
+  yield 'data:[DONE]'
+  # The completion marker ends the job even if the HTTP peer keeps the
+  # connection open; do not wait for a socket timeout after a valid answer.
+  await asyncio.Event().wait()
 class Client:
  def __init__(self,reason):self.reason=reason
  def stream(self,*args,**kwargs):

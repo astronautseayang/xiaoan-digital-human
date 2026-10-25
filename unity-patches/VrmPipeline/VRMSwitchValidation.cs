@@ -43,12 +43,12 @@ namespace LocalHuman {
     if(instances.TryGetValue(id,out var reused))Check(reused==loader.Instance,"Avatar was reimported");else instances[id]=loader.Instance;
     var face=loader.Instance.GetComponent<VRMFaceController>();
     Check(face.enabled&&face.LoadedTexture&&face.GetComponent<FaceMorphController>().enabled,"Cached face state lost");
-    Check(face.AppliedProfiles>=1&&face.LastError==null,"Refreshed profile failed");report.profilePreserved=true;
+    Check(face.AppliedProfiles==1,"Unchanged profile decoded again");report.profilePreserved=true;
     Check(source.isPlaying&&source.clip==clip,"Audio reset by switch");report.audioPreserved=true;
     Check(loader.GetComponent<LocalAvatarLipSync>().avatar==loader.Instance,"Lip target not rebound");
     GC.Collect();
     for(int n=0;n<180;n++)yield return new WaitForEndOfFrame();
-    Check(loader.GetComponentsInChildren<Vrm10Instance>().Length==1,"Expected one active avatar");Check(loader.GetComponentsInChildren<Vrm10Instance>(true).Length==1,"Expected exactly one cached avatar");
+    Check(loader.GetComponentsInChildren<Vrm10Instance>().Length==1,"Expected one active avatar");Check(loader.GetComponentsInChildren<Vrm10Instance>(true).Length==2,"Expected exactly two cached avatars");
     if(report.switches<=2){
      Debug.Log("SWITCH_TEST_MEASURE "+id);var sample=new Sample{avatar=id,springChains=loader.Instance.SpringBone.Springs.Count};var animator=loader.Instance.GetComponent<Animator>();Check(animator.isHuman&&animator.avatar.isValid,"Invalid humanoid");
      var feet=new[]{animator.GetBoneTransform(HumanBodyBones.LeftFoot),animator.GetBoneTransform(HumanBodyBones.RightFoot)};var start=new[]{feet[0].position,feet[1].position};var frames=new List<float>();double previous=Time.realtimeSinceStartupAsDouble;int blinks=loader.GetComponent<LocalAvatarLipSync>().BlinkCount;

@@ -40,11 +40,11 @@ namespace LocalHuman
             panel.CloseDrawer();yield return new WaitForSecondsRealtime(.5f);
             var view=demo.GetComponent<AvatarViewMode>();bool originalFull=view.FullBody;
             view.SetFullBody(false);var portraitPosition=Camera.main.transform.position;
-            GameObject.Find("全身").GetComponent<UnityEngine.UI.Button>().onClick.Invoke();
+            panel.FullView.onClick.Invoke();
             yield return new WaitForSecondsRealtime(.5f);
             report.fullBody=view.FullBody&&Camera.main.transform.position.z>2;
             ScreenCapture.CaptureScreenshot(folder+"/full-body.png");yield return new WaitForEndOfFrame();
-            GameObject.Find("当前近景").GetComponent<UnityEngine.UI.Button>().onClick.Invoke();yield return null;
+            panel.PortraitView.onClick.Invoke();yield return null;
             report.portraitRestored=!view.FullBody&&Vector3.Distance(Camera.main.transform.position,portraitPosition)<.001f;
             view.SetFullBody(originalFull);
             ScreenCapture.CaptureScreenshot(folder+"/standby.png");Save("awaiting_real_audio");

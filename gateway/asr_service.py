@@ -22,6 +22,15 @@ class ASRService:
         self.root=Path(root);self.model=None;self.device=None
         self.lock=threading.RLock();self.last_error='';self.cpu_fallback=False
 
+    def is_ready(self):
+        # Requests reload settings even while a model remains in memory.
+        # Readiness must account for configuration becoming unreadable too.
+        try:
+            config(self.root)
+        except (OSError, ValueError):
+            return False
+        return self.model is not None
+
     def status(self):
         settings=config(self.root)
         return {'backend':'sensevoice','model_id':settings['model_id'],
@@ -69,7 +78,9 @@ class ASRService:
         with self.lock:
             settings=config(self.root)
             error=None
-            # One bounded ordinary retry, plus a separate CUDA-to-CPU fallback.
+            retries_left=settings['retries']
+            # CPU retries have their own budget; falling back from CUDA does
+            # not consume an ordinary retry.
             for attempt in range(settings['retries']+2):
                 try:
                     if self.model is None:self._load(settings)
@@ -89,8 +100,10 @@ class ASRService:
                     if self.device=='cuda:0':
                         self.cpu_fallback=True;self._release();self.device='cpu'
                         continue
-                    if attempt>=settings['retries']:break
-                    self._release();time.sleep(.2)
+                    self._release()
+                    if retries_left<=0:break
+                    retries_left-=1
+                    time.sleep(.2)
             self.last_error='语音识别暂时不可用，请稍后重试。'
             raise ASRUnavailable(self.last_error) from error
 

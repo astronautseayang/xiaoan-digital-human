@@ -12,10 +12,11 @@ namespace LocalHuman.AvatarPipeline
         Button fullView,portraitView,salutation,speakerEnroll,speakerOnly;
         Button send,record,replay,native,paste,refresh,enroll,resetVoice,volumeToggle,listenToggle;
         bool open;
+        RectTransform chatPage, settingsPage;Button chatTab, settingsTab;
         RectTransform candidates;Text composition;Button[] choices=new Button[3];
-        public void FocusInput(){open=true;StartCoroutine(FocusWhenVisible());}
+        public void FocusInput(){open=true;ShowPreferences(false);StartCoroutine(FocusWhenVisible());}
         System.Collections.IEnumerator FocusWhenVisible(){yield return null;Canvas.ForceUpdateCanvases();field.Select();field.ActivateInputField();}
-        public void ToggleDrawer(){if(open)CloseDrawer();else open=true;}
+        public void ToggleDrawer(){if(open)CloseDrawer();else {open=true;ShowPreferences(false);}}
         public void CloseDrawer(){open=false;if(field){field.DeactivateInputField();((ChineseInputField)field).ClearComposition();}UnityEngine.Input.imeCompositionMode=IMECompositionMode.On;}Text identity,credit,voiceState;VrmAvatarLoader loader;StudioIcon recordIcon;
         static readonly Color Ink=new Color32(29,53,52,255);
         static readonly Color Surface=new Color32(225,236,232,255);
@@ -29,6 +30,8 @@ namespace LocalHuman.AvatarPipeline
         public Button Enroll => enroll;
         public Button ResetVoice => resetVoice;
         public Button VolumeToggle => volumeToggle;
+        public Button FullView => fullView;
+        public Button PortraitView => portraitView;
         void Start()
         {
             demo=GetComponent<LocalHumanDemo>();loader=GetComponent<VrmAvatarLoader>();
@@ -39,48 +42,101 @@ namespace LocalHuman.AvatarPipeline
             var backdrop=Box("SettingsBackdrop",go.transform,Vector2.zero,new Vector2(1600,900),new Color(.03f,.09f,.09f,.3f),0);
             backdrop.anchorMin=Vector2.zero;backdrop.anchorMax=Vector2.one;backdrop.offsetMin=backdrop.offsetMax=Vector2.zero;
             backdrop.gameObject.AddComponent<Button>().onClick.AddListener(CloseDrawer);
-            var card=Box("GlassCard",go.transform,new Vector2(24,-24),new Vector2(440,868),new Color32(242,247,246,255),24);
-            card.anchorMin=card.anchorMax=card.pivot=new Vector2(1,1);card.anchoredPosition=new Vector2(-24,-16);
-            Box("Accent",card,new Vector2(24,-26),new Vector2(5,58),new Color32(28,103,95,255),2);
-            Label("Title",card,"设置与更多",new Vector2(44,-22),new Vector2(290,48),32,FontStyle.Bold);
-            Label("Subtitle",card,"音量、形象与文字输入",new Vector2(24,-78),new Vector2(392,32),20);
-            Action(card,"关闭",338,26,78,CloseDrawer);
-            refresh=Action(card,"刷新形象",24,126,392,()=>loader.ReloadProfile());
-            identity=Label("AvatarState",card,"加载角色…",new Vector2(24,-182),new Vector2(392,30),18);
-            var viewport=Box("AnswerViewport",card,new Vector2(24,-222),new Vector2(392,72),Color.white,12);
+            var card=Box("GlassCard",go.transform,Vector2.zero,new Vector2(520,0),new Color32(242,247,246,255),24);
+            card.anchorMin=new Vector2(1,0);card.anchorMax=new Vector2(1,1);card.pivot=new Vector2(1,1);
+            card.offsetMin=new Vector2(-544,24);card.offsetMax=new Vector2(-24,-24);
+            Box("Accent",card,new Vector2(24,-28),new Vector2(5,40),new Color32(28,103,95,255),2);
+            Label("Title",card,"设置与更多",new Vector2(44,-24),new Vector2(340,46),32,FontStyle.Bold);
+            Label("Subtitle",card,"按您的习惯，调整陪伴方式",new Vector2(24,-76),new Vector2(400,28),19);
+            Action(card,"关闭",414,28,82,CloseDrawer);
+            chatTab=Action(card,"对话输入",24,116,230,()=>ShowPreferences(false));
+            settingsTab=Action(card,"偏好设置",266,116,230,()=>ShowPreferences(true));
+
+            chatPage=Box("ChatPage",card,Vector2.zero,Vector2.zero,Color.clear,0);StretchBody(chatPage);
+            Label("ConversationTitle",chatPage,"文字对话",Vector2.zero,new Vector2(456,32),24,FontStyle.Bold);
+            Label("ConversationHint",chatPage,"输入问题，也可以点击麦克风直接说话",new Vector2(0,-40),new Vector2(456,28),18);
+            var viewport=Box("AnswerViewport",chatPage,new Vector2(0,-84),new Vector2(456,144),Color.white,14);
             viewport.gameObject.AddComponent<RectMask2D>();var scroll=viewport.gameObject.AddComponent<ScrollRect>();answerScroll=scroll;scroll.horizontal=false;scroll.movementType=ScrollRect.MovementType.Clamped;scroll.scrollSensitivity=30;
-            response=Label("Answer",viewport,demo.Answer,new Vector2(14,-10),new Vector2(364,52),20);
-            response.alignment=TextAnchor.UpperLeft;response.gameObject.AddComponent<ContentSizeFitter>().verticalFit=ContentSizeFitter.FitMode.PreferredSize;
+            response=Label("Answer",viewport,demo.Answer,new Vector2(16,-12),new Vector2(424,120),22);
+            response.alignment=TextAnchor.UpperLeft;response.supportRichText=false;
+            response.gameObject.AddComponent<ContentSizeFitter>().verticalFit=ContentSizeFitter.FitMode.PreferredSize;
             scroll.viewport=viewport;scroll.content=response.rectTransform;
-            var input=Box("QuestionInput",card,new Vector2(24,-308),new Vector2(392,64),Color.white,14);
+            var input=Box("QuestionInput",chatPage,new Vector2(0,-244),new Vector2(456,76),Color.white,14);
             var chinese=input.gameObject.AddComponent<ChineseInputField>();chinese.Gateway=demo.gateway;
             field=chinese;field.targetGraphic=input.GetComponent<RoundedCard>();field.characterLimit=1000;
-            var text=Label("InputText",input,"",new Vector2(14,-12),new Vector2(364,42),24);text.supportRichText=false;text.alignment=TextAnchor.MiddleLeft;
+            var text=Label("InputText",input,"",new Vector2(16,-14),new Vector2(424,48),24);text.supportRichText=false;text.alignment=TextAnchor.MiddleLeft;
             field.textComponent=text;field.text=demo.Question;field.onValueChanged.AddListener(v=>demo.Question=v);
-            var placeholder=Label("Placeholder",input,"直接输入拼音或中文",new Vector2(14,-12),new Vector2(364,42),22);placeholder.color=new Color32(112,130,126,255);field.placeholder=placeholder;
-            candidates=Box("ChineseCandidates",card,new Vector2(24,-202),new Vector2(392,100),Color.white,12);
-            composition=Label("Pinyin",candidates,"",new Vector2(10,-4),new Vector2(372,32),20);
-            for(int i=0;i<3;i++){int slot=i;choices[i]=Action(candidates,"",8+i*104,42,100,()=>chinese.Choose(slot));}
-            Action(candidates,"‹",322,42,30,()=>chinese.TurnPage(-1));Action(candidates,"›",356,42,30,()=>chinese.TurnPage(1));
-            native=Action(card,"文字输入",24,386,116,FocusInput);
-            paste=Action(card,"粘贴",150,386,68,()=>chinese.InsertValue(GUIUtility.systemCopyBuffer));
-            replay=IconButton(card,"Replay",228,386,StudioIcon.Kind.Replay,()=>demo.ReplayLast());
-            record=IconButton(card,"Microphone",294,386,StudioIcon.Kind.Microphone,()=>GetComponent<OfflineWakeClient>().ListenNow());recordIcon=record.GetComponentInChildren<StudioIcon>();
-            send=IconButton(card,"Send",360,386,StudioIcon.Kind.Send,()=>demo.SubmitQuestion());
+            var placeholder=Label("Placeholder",input,"输入拼音或中文，和小安聊一聊",new Vector2(16,-14),new Vector2(424,48),22);placeholder.color=new Color32(112,130,126,255);field.placeholder=placeholder;
+            candidates=Box("ChineseCandidates",chatPage,new Vector2(0,-136),new Vector2(456,100),Color.white,12);
+            composition=Label("Pinyin",candidates,"",new Vector2(10,-4),new Vector2(436,32),20);
+            for(int i=0;i<3;i++){int slot=i;choices[i]=Action(candidates,"",8+i*124,42,120,()=>chinese.Choose(slot));}
+            Action(candidates,"‹",386,42,30,()=>chinese.TurnPage(-1));Action(candidates,"›",420,42,30,()=>chinese.TurnPage(1));
+            native=Action(chatPage,"文字输入",0,338,126,FocusInput);
+            paste=Action(chatPage,"粘贴",138,338,88,()=>chinese.InsertValue(GUIUtility.systemCopyBuffer));
+            replay=IconButton(chatPage,"Replay",240,338,StudioIcon.Kind.Replay,()=>demo.ReplayLast());
+            record=IconButton(chatPage,"Microphone",320,338,StudioIcon.Kind.Microphone,()=>GetComponent<OfflineWakeClient>().ListenNow());recordIcon=record.GetComponentInChildren<StudioIcon>();
+            send=IconButton(chatPage,"Send",400,338,StudioIcon.Kind.Send,()=>demo.SubmitQuestion());
             send.GetComponent<RoundedCard>().color=new Color32(198,228,218,255);
-            status=Label("Status",card,"就绪",new Vector2(24,-446),new Vector2(392,30),20);status.color=new Color32(28,103,95,255);
-            enroll=Action(card,"录入我的音色",24,490,190,()=>demo.ToggleVoiceEnrollment());
-            resetVoice=Action(card,"恢复默认音色",226,490,190,()=>demo.ResetVoice());
-            voiceState=Label("VoiceState",card,"",new Vector2(24,-548),new Vector2(392,30),18);
-            fullView=Action(card,"全身",24,578,190,()=>GetComponent<AvatarViewMode>().SetFullBody(true));
-            portraitView=Action(card,"当前近景",226,578,190,()=>GetComponent<AvatarViewMode>().SetFullBody(false));
-            volumeToggle=Action(card,"大音量：关闭",24,638,190,()=>GetComponent<SeniorCareClient>().ToggleLoudGain());
-            listenToggle=Action(card,"唤醒监听：开启",226,638,190,()=>GetComponent<SeniorCareClient>().ToggleListening());
-            salutation=Action(card,"对您的称呼：您（点击切换）",24,704,392,()=>GetComponent<SeniorCompanion>().Cycle());
-            speakerEnroll=Action(card,"录入识别声音",24,764,190,()=>demo.ToggleSpeakerEnrollment());
-            speakerOnly=Action(card,"只听我：未录入",226,764,190,()=>GetComponent<SpeakerInputClient>().Toggle());
-            credit=Label("Attribution",card,"",new Vector2(24,-830),new Vector2(392,30),12);
+            Label("ReplayCaption",chatPage,"重播",new Vector2(240,-394),new Vector2(56,26),16).alignment=TextAnchor.MiddleCenter;
+            Label("RecordCaption",chatPage,"说话",new Vector2(320,-394),new Vector2(56,26),16).alignment=TextAnchor.MiddleCenter;
+            Label("SendCaption",chatPage,"发送",new Vector2(400,-394),new Vector2(56,26),16).alignment=TextAnchor.MiddleCenter;
+            status=Label("Status",card,"就绪",Vector2.zero,new Vector2(472,48),18);status.color=new Color32(28,103,95,255);
+            status.rectTransform.anchorMin=status.rectTransform.anchorMax=new Vector2(0,0);
+            status.rectTransform.anchoredPosition=new Vector2(24,68);
 
+            settingsPage=Box("SettingsViewport",card,Vector2.zero,Vector2.zero,Color.clear,0);StretchBody(settingsPage);
+            settingsPage.gameObject.AddComponent<RectMask2D>();
+            var settingsScroll=settingsPage.gameObject.AddComponent<ScrollRect>();settingsScroll.horizontal=false;
+            settingsScroll.movementType=ScrollRect.MovementType.Clamped;settingsScroll.scrollSensitivity=36;
+            var content=Box("SettingsContent",settingsPage,Vector2.zero,new Vector2(456,970),Color.clear,0);
+            settingsScroll.viewport=settingsPage;settingsScroll.content=content;
+            var track=Box("ScrollTrack",settingsPage,Vector2.zero,Vector2.zero,new Color32(226,234,231,255),2);
+            track.anchorMin=new Vector2(0,0);track.anchorMax=new Vector2(0,1);track.offsetMin=new Vector2(466,0);track.offsetMax=new Vector2(471,0);
+            var thumb=Box("ScrollThumb",track,Vector2.zero,new Vector2(5,40),new Color32(126,158,148,255),2);
+            var scrollbar=track.gameObject.AddComponent<Scrollbar>();scrollbar.direction=Scrollbar.Direction.BottomToTop;scrollbar.handleRect=thumb;scrollbar.targetGraphic=thumb.GetComponent<RoundedCard>();
+            settingsScroll.verticalScrollbar=scrollbar;
+
+            var voice=Section(content,"VoiceSettings",0,190,"音色与朗读","使用熟悉的声音，让对话更亲切");
+            voiceState=Label("VoiceState",voice,"",new Vector2(18,-76),new Vector2(420,30),19);
+            enroll=Action(voice,"录入我的音色",18,120,204,()=>demo.ToggleVoiceEnrollment());
+            resetVoice=Action(voice,"恢复默认音色",234,120,204,()=>demo.ResetVoice());
+            var audio=Section(content,"ListeningSettings",206,150,"音量与唤醒","调整播放音量，或开启语音唤醒");
+            volumeToggle=Action(audio,"大音量：关闭",18,82,204,()=>GetComponent<SeniorCareClient>().ToggleLoudGain());
+            listenToggle=Action(audio,"唤醒监听：开启",234,82,204,()=>GetComponent<SeniorCareClient>().ToggleListening());
+            var avatar=Section(content,"AvatarSettings",372,206,"形象与视角","选择适合您的观看距离");
+            fullView=Action(avatar,"全身",18,80,204,()=>GetComponent<AvatarViewMode>().SetFullBody(true));
+            portraitView=Action(avatar,"近景",234,80,204,()=>GetComponent<AvatarViewMode>().SetFullBody(false));
+            refresh=Action(avatar,"刷新形象",18,140,144,()=>loader.ReloadProfile());
+            identity=Label("AvatarState",avatar,"加载角色…",new Vector2(176,-148),new Vector2(262,30),18);
+            var personal=Section(content,"CompanionSettings",594,150,"陪伴称呼","选择小安与您交谈时使用的称呼");
+            salutation=Action(personal,"对您的称呼：您（点击切换）",18,82,420,()=>GetComponent<SeniorCompanion>().Cycle());
+            var speaker=Section(content,"SpeakerSettings",760,164,"声音识别","录入您的声音后，可选择只响应您");
+            speakerEnroll=Action(speaker,"录入识别声音",18,94,204,()=>demo.ToggleSpeakerEnrollment());
+            speakerOnly=Action(speaker,"只听我：未录入",234,94,204,()=>GetComponent<SpeakerInputClient>().Toggle());
+            credit=Label("Attribution",content,"",new Vector2(8,-940),new Vector2(440,30),12);
+            ShowPreferences(true);
+
+        }
+        void StretchBody(RectTransform rect)
+        {
+            rect.anchorMin=Vector2.zero;rect.anchorMax=Vector2.one;
+            rect.offsetMin=new Vector2(24,84);rect.offsetMax=new Vector2(-24,-184);
+        }
+        RectTransform Section(Transform parent,string name,float y,float height,string title,string hint)
+        {
+            var section=Box(name,parent,new Vector2(0,-y),new Vector2(456,height),Color.white,16);
+            Label("Heading",section,title,new Vector2(18,-14),new Vector2(420,34),23,FontStyle.Bold);
+            var description=Label("Description",section,hint,new Vector2(18,-50),new Vector2(420,26),18);
+            description.color=new Color32(100,122,115,255);return section;
+        }
+        void ShowPreferences(bool value)
+        {
+            if(!chatPage||!settingsPage)return;
+            if(value&&field){field.DeactivateInputField();((ChineseInputField)field).ClearComposition();}
+            chatPage.gameObject.SetActive(!value);settingsPage.gameObject.SetActive(value);
+            var selected=new Color32(198,228,218,255);
+            chatTab.GetComponent<RoundedCard>().color=value?Surface:selected;
+            settingsTab.GetComponent<RoundedCard>().color=value?selected:Surface;
         }
         RectTransform Box(string name,Transform parent,Vector2 pos,Vector2 size,Color color,float radius)
         {
@@ -96,7 +152,7 @@ namespace LocalHuman.AvatarPipeline
         {
             var rt=Box(text,parent,new Vector2(x,-y),new Vector2(width,50),Surface,12);
             var b=rt.gameObject.AddComponent<Button>();b.targetGraphic=rt.GetComponent<RoundedCard>();var c=b.colors;c.normalColor=Color.white;c.highlightedColor=new Color(237f/247,242f/250,247f/252);c.pressedColor=new Color(226f/247,232f/250,240f/252);c.selectedColor=c.highlightedColor;c.fadeDuration=.12f;b.colors=c;b.onClick.AddListener(click);
-            if(!string.IsNullOrEmpty(text)){var t=Label("Label",rt,text,Vector2.zero,new Vector2(width,50),20);t.alignment=TextAnchor.MiddleCenter;}
+            if(!string.IsNullOrEmpty(text)){var t=Label("Label",rt,text,new Vector2(8,0),new Vector2(width-16,50),20);t.alignment=TextAnchor.MiddleCenter;t.resizeTextForBestFit=true;t.resizeTextMinSize=16;t.resizeTextMaxSize=20;}
             return b;
         }
         Button IconButton(Transform parent,string name,float x,float y,StudioIcon.Kind kind,UnityEngine.Events.UnityAction click)
@@ -132,7 +188,7 @@ namespace LocalHuman.AvatarPipeline
                 int index=chinese.Page*3+i;var button=choices[i];
                 button.interactable=index<chinese.Choices.Length;
                 var label=button.GetComponentInChildren<Text>();
-                if(!label)label=Label("Label",button.transform,"",Vector2.zero,new Vector2(100,50),18);
+                if(!label)label=Label("Label",button.transform,"",Vector2.zero,new Vector2(120,50),18);
                 label.alignment=TextAnchor.MiddleCenter;label.resizeTextForBestFit=true;label.resizeTextMinSize=12;label.resizeTextMaxSize=20;
                 label.text=index<chinese.Choices.Length?(i+1)+" "+chinese.Choices[index]:"";
             }

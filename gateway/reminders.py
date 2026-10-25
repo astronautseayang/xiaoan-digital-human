@@ -2,8 +2,13 @@
 from datetime import datetime, timedelta
 import re
 import uuid
+from decimal import Decimal
 
 NUMBER = r'[0-9零〇一二两三四五六七八九十百]+'
+DURATION_NUMBER = rf'(?:[0-9]+(?:[.．][0-9]+)?|{NUMBER})'
+HOURS = rf'(?:{DURATION_NUMBER}(?:个)?(?:半)?小时|半(?:个)?小时)'
+RELATIVE_TIME = rf'(?<![0-9.．负−-])({HOURS}(?:又?{DURATION_NUMBER}分钟|半)?|{DURATION_NUMBER}(?:个)?分钟)(?:以后|之后|后)'
+TIME_START = rf'{RELATIVE_TIME}|{NUMBER}[点时:：]'
 
 
 def number(value):
@@ -16,6 +21,23 @@ def number(value):
             raise ValueError('Invalid Chinese number')
         return (digits[left] if left else 1) * 10 + (digits[right] if right else 0)
     return int(''.join(str(digits[c]) for c in value))
+
+
+def duration_minutes(value):
+    """Parse the entire duration; never silently discard an hour or decimal."""
+    def count(part):
+        return Decimal(part.replace('．', '.')) if part[0].isdigit() else Decimal(number(part))
+    if '小时' not in value:
+        return count(value.removesuffix('分钟').removesuffix('个'))
+    hours, minutes = value.split('小时', 1)
+    half = '半' in hours
+    hours = hours.replace('半', '').removesuffix('个')
+    total = (count(hours) if hours else Decimal(0)) * 60
+    if half:
+        total += 30
+    if minutes:
+        total += 30 if minutes == '半' else count(minutes.removeprefix('又').removesuffix('分钟'))
+    return total
 
 
 def initialize(db):
@@ -70,13 +92,13 @@ def command(engine, text, now=None, replace_id=None):
         return None
     if re.search(r'(不要|不用|别|不必|取消|能不能|能否|可以|如何|怎么|如果|假如)', value):
         return '设置提醒时，请直接告诉我时间和事情，例如“今天下午三点提醒我喝水”。如需取消，请说“查看提醒”后说明取消第几个提醒。'
-    if value.count('提醒我') > 1 or len(re.findall(rf'{NUMBER}[点时:：]', value)) > 1:
+    if value.count('提醒我') > 1 or len(re.findall(TIME_START, value)) > 1:
         return '还没有设置提醒。请一次告诉我一个明确的时间和事项，多条提醒可以分别设置。'
     # Both “今天12点52的时候提醒我吃药” and “提醒我今天12:52吃药”.
     before, after = value.split('提醒我', 1)
     # Polite prefixes and assistant names are not time expressions. Search the
     # side containing a time, so “小安，请提醒我一分钟后喝水” works too.
-    time_pattern = rf'{NUMBER}(?:分钟|小时)(?:以后|之后|后)|{NUMBER}[点时:：]'
+    time_pattern = TIME_START
     time_before = re.search(time_pattern, before)
     time_after = re.search(time_pattern, after)
     if time_before and time_after:
@@ -84,41 +106,66 @@ def command(engine, text, now=None, replace_id=None):
     source_before = bool(time_before)
     source = before if source_before else after
     try:
-        relative = re.search(rf'({NUMBER})(分钟|小时)(?:以后|之后|后)', source)
+        if re.search(rf'[-−负]{DURATION_NUMBER}', source):
+            return '时间格式不正确，还没有设置提醒。请使用大于零的提醒时间。'
+        relative = re.search(RELATIVE_TIME, source)
         clock = re.search(rf'({NUMBER})[点时:：](?:(半|一刻|三刻)|({NUMBER})(?:分)?)?', source)
+        # The integer clock matcher must not accept a fragment of a decimal
+        # hour/minute. Decimal relative durations remain supported separately.
+        if clock and (re.search(rf'{NUMBER}[.．]$', source[:clock.start()])
+                      or re.match(rf'[.．]{NUMBER}', source[clock.end():])):
+            return '还没有设置提醒。钟点请使用整数小时和分钟，例如“明天八点三十分提醒我关火”。'
+        # Seconds immediately after a clock belong to its time expression,
+        # even when the remaining text would otherwise become the task.
+        if clock and re.match(rf'(?:{NUMBER})?秒', source[clock.end():]):
+            return '还没有设置提醒。目前提醒时间精确到分钟，暂不支持秒，请按小时和分钟重新设置。'
+        # In “提醒我明天八点准备下午的会议”, everything after the
+        # matched time is the task. Its words cannot change time/recurrence.
+        time_match = relative or clock
+        time_source = source if source_before or not time_match else source[:time_match.end()]
         if relative:
-            count = number(relative[1])
-            if count <= 0 or count > 10000:
+            # A suffix match must not turn an unsupported longer duration
+            # (e.g. 一天一小时后) into a shorter, silently incorrect reminder.
+            prefix = source[:relative.start()]
+            if re.search(rf'小时|分钟|{NUMBER}(?:个)?(?:天|周|月)|[0-9.．零〇一二两三四五六七八九十百]+$', prefix):
+                return '还没有设置提醒。请使用明确的小时和分钟，例如“一个小时三十分钟后提醒我吃饭”。'
+            minutes = duration_minutes(relative[1])
+            if minutes <= 0 or minutes > 600000:
                 raise ValueError()
-            due = now + timedelta(**({'minutes': count} if relative[2] == '分钟' else {'hours': count}))
+            due = now + timedelta(minutes=float(minutes))
             match = relative
         elif clock:
             hour, minute = number(clock[1]), number(clock[3]) if clock[3] else 0
             if clock[2]:
                 minute = {'半': 30, '一刻': 15, '三刻': 45}[clock[2]]
-            if re.search(r'下午|晚上|傍晚', source) and 1 <= hour < 12:
+            if re.search(r'下午|晚上|傍晚', time_source) and 1 <= hour < 12:
                 hour += 12
-            if '凌晨' in source and hour == 12:
+            if '凌晨' in time_source and hour == 12:
                 hour = 0
-            if '中午' in source and 1 <= hour <= 2:
+            if '中午' in time_source and 1 <= hour <= 2:
                 hour += 12
+            midnight = hour == 12 and bool(re.search(r'晚上|夜里', time_source))
+            if midnight:
+                hour = 0
             due = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            days = 2 if '后天' in source else 1 if '明天' in source else 0
+            days = 2 if '后天' in time_source else 1 if '明天' in time_source else 0
+            if midnight:
+                days += 1
             due += timedelta(days=days)
-            if due <= now and ('每天' in source or not re.search(r'今天|明天|后天', source)):
+            if due <= now and ('每天' in time_source or not re.search(r'今天|明天|后天', time_source)):
                 due += timedelta(days=1)
             match = clock
         else:
             return '还没有设置提醒。请告诉我具体时间，例如“今天下午三点提醒我吃药”。'
         if due <= now:
             return f'今天{due:%H:%M}已经过了，没有设置提醒。请确认新的时间，例如“明天{due:%H:%M}提醒我吃药”。'
-        if re.search(r'每周|每月|周[一二三四五六日天]|星期|月|年|[号日]|下周|工作日|每隔|秒', source) or (relative and '每天' in source):
+        if re.search(r'每周|每月|周[一二三四五六日天]|星期|月|年|[号日]|下周|工作日|每隔|秒', time_source) or (relative and '每天' in time_source):
             return '目前支持今天、明天、后天、每天，或几分钟后提醒。请用这些时间重新设置。'
         task = after if source_before else after[match.end():]
         task = re.sub(r'^(?:的时候|时候|时|再|要|我|请)+', '', task).strip('，,。 ')
         if not task or len(task) > 200:
             return '还没有设置提醒。请告诉我要提醒您做什么。'
-        daily = '每天' in source
+        daily = '每天' in time_source
         due_text = due.isoformat(timespec='seconds')
         existing = engine.db.execute("SELECT id FROM reminders WHERE task=? AND due=? AND daily=? AND state='scheduled'", (task, due_text, int(daily))).fetchone()
         key = existing['id'] if existing else uuid.uuid4().hex

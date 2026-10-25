@@ -96,7 +96,8 @@ namespace LocalHuman
         }
         [Serializable] sealed class Message { public string role; public string content; }
         [Serializable] sealed class Chat { public string text; public List<Message> history; }
-        [Serializable] sealed class Result { public string text; public string input_notice; public string care_command; public string audio_url; public string transcript; public string id; public bool done; public bool text_done; public bool truncated; public string error; public Result[] clips; }
+        [Serializable] sealed class AudioClipResult { public string text; public string audio_url; }
+        [Serializable] sealed class Result { public string text; public string input_notice; public string care_command; public string audio_url; public string transcript; public string id; public bool done; public bool text_done; public bool truncated; public string error; public AudioClipResult[] clips; }
         readonly List<Message> history = new List<Message>();
         public Material glassMaterial;
         public string Answer => answer;

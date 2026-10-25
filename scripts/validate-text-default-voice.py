@@ -17,5 +17,5 @@ assert j['clips']
 c.get(j['clips'][0]['audio_url']).raise_for_status()
 out=Path('artifacts/validation/text-default-voice');out.mkdir(parents=True,exist_ok=True)
 (out/'long-answer.json').write_text(json.dumps(j,ensure_ascii=False,indent=2))
-r=c.post('/api/tts',json={'text':'你好，我是你的数字人助手，很高兴与你聊天。'});r.raise_for_status();(out/'default-female.wav').write_bytes(r.content)
+r=c.post('/api/tts',json={'text':'你好，我是你的数字人助手，很高兴与你聊天。'});r.raise_for_status();(out/'default-voice.wav').write_bytes(r.content)
 print('long answer and default reference synthesis passed',j['elapsed_seconds'],flush=True)

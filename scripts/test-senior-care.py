@@ -3,10 +3,12 @@ import asyncio
 from datetime import datetime
 import io
 import json
+import sqlite3
 from pathlib import Path
 import tempfile
 import subprocess
 import unittest
+from unittest.mock import patch
 import wave
 from zoneinfo import ZoneInfo
 import numpy as np
@@ -17,6 +19,20 @@ from gateway.senior_audio import process_senior_speech
 ROOT = Path(__file__).resolve().parents[1]
 
 class CareTests(unittest.IsolatedAsyncioTestCase):
+    async def test_constructor_schema_failure_closes_its_connection(self):
+        connection = sqlite3.connect(':memory:')
+        error = sqlite3.OperationalError('injected schema initialization failure')
+        try:
+            with patch('gateway.care.sqlite3.connect', return_value=connection), \
+                 patch('gateway.care.reminders.initialize', side_effect=error):
+                with self.assertRaises(sqlite3.OperationalError) as raised:
+                    CareEngine(self.root, self.engine.synthesize, self.client)
+                self.assertIs(raised.exception, error)
+            with self.assertRaises(sqlite3.ProgrammingError):
+                connection.execute('SELECT 1')
+        finally:
+            connection.close()
+
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
@@ -32,6 +48,45 @@ class CareTests(unittest.IsolatedAsyncioTestCase):
         self.engine.db.close()
         await self.client.aclose()
         self.temp.cleanup()
+
+    async def test_audio_storage_failures_preserve_published_file_and_recover(self):
+        audio = self.root/'artifacts/care-audio'
+        audio.mkdir(parents=True)
+        original_write = Path.write_bytes
+        original_replace = Path.replace
+        for existing in (False, True):
+            for failure in ('write', 'replace'):
+                with self.subTest(existing=existing, failure=failure):
+                    key = f'atomic-{existing}-{failure}'
+                    final = audio/(key+'.wav')
+                    self.engine.db.execute("INSERT INTO events (id,text,audio_state) VALUES (?,?,'pending')", (key,'测试'))
+                    self.engine.db.commit()
+                    if existing:
+                        final.write_bytes(b'previous-audio')
+                    def write(path, data):
+                        if path.parent == audio and failure == 'write':
+                            original_write(path, data[:3])
+                            raise OSError('Injected partial audio write')
+                        return original_write(path, data)
+                    def replace(path, target):
+                        if path.parent == audio and failure == 'replace':
+                            raise PermissionError('Injected audio replace failure')
+                        return original_replace(path, target)
+                    with patch.object(Path, 'write_bytes', write), patch.object(Path, 'replace', replace):
+                        await self.engine.render(key, '测试')
+                    row = self.engine.db.execute('SELECT * FROM events WHERE id=?', (key,)).fetchone()
+                    self.assertEqual(row['audio_state'], 'failed')
+                    if existing:
+                        self.assertEqual(final.read_bytes(), b'previous-audio')
+                    else:
+                        self.assertFalse(final.exists())
+                    self.assertEqual(list(audio.glob('*.tmp')), [])
+                    await self.engine.render(key, '测试')
+                    row = self.engine.db.execute('SELECT * FROM events WHERE id=?', (key,)).fetchone()
+                    self.assertEqual(row['audio_state'], 'ready')
+                    self.assertEqual(row['audio_url'], '/care-audio/'+key+'.wav')
+                    self.assertEqual(final.read_bytes(), b'audio-test')
+                    self.assertEqual(list(audio.glob('*.tmp')), [])
 
     async def test_daily_boundaries_and_duplicate_ticks(self):
         zone = ZoneInfo('Asia/Shanghai')
@@ -105,6 +160,220 @@ class CareTests(unittest.IsolatedAsyncioTestCase):
         # run() closes its database; open it again for fixture teardown.
         import sqlite3
         self.engine.db=sqlite3.connect(self.root/'artifacts/care.sqlite3')
+
+    async def test_restart_repairs_missing_empty_and_failed_audio(self):
+        audio = self.root/'artifacts/care-audio'
+        audio.mkdir(parents=True)
+        for key, state in [('pending','pending'),('failed','failed'),('missing','ready'),
+                           ('empty','ready'),('valid','ready'),('ack','failed'),('expired','failed')]:
+            self.engine.db.execute('''INSERT INTO events
+                (id,kind,priority,title,text,created,expires,audio_state,audio_url,acknowledged)
+                VALUES (?, 'reminder',80,'恢复测试',?,strftime('%s','now'),?,?,?,?)''',
+                (key,key,0 if key=='expired' else 9999999999,state,'/care-audio/'+key+'.wav',int(key=='ack')))
+        self.engine.db.commit()
+        (audio/'empty.wav').write_bytes(b'')
+        (audio/'valid.wav').write_bytes(b'existing-audio')
+        calls=[]
+        async def synth(text):
+            calls.append(text)
+            return b'recovered-audio'
+        second=CareEngine(self.root,synth,self.client)
+        with patch.object(second,'tick'):
+            runner=asyncio.create_task(second.run())
+            try:
+                for _ in range(50):
+                    await asyncio.sleep(.01)
+                    if len(calls)>=4:break
+                self.assertCountEqual(calls,['pending','failed','missing','empty'])
+                for key in ('pending','failed','missing','empty'):
+                    row=self.engine.db.execute('SELECT audio_state FROM events WHERE id=?',(key,)).fetchone()
+                    self.assertEqual(row[0],'ready',key)
+                    self.assertEqual((audio/(key+'.wav')).read_bytes(),b'recovered-audio')
+                self.assertEqual((audio/'valid.wav').read_bytes(),b'existing-audio')
+            finally:
+                runner.cancel()
+                await asyncio.gather(runner,return_exceptions=True)
+
+    async def test_failed_recovery_is_not_retried_each_tick(self):
+        self.engine.db.execute("INSERT INTO events (id,kind,priority,title,text,created,expires,audio_state) VALUES ('failed','reminder',80,'标题','文本',strftime('%s','now'),9999999999,'failed')")
+        self.engine.db.commit()
+        calls=[]
+        async def fail(text):
+            calls.append(text)
+            raise RuntimeError('Injected TTS failure')
+        second=CareEngine(self.root,fail,self.client)
+        twice=asyncio.Event()
+        ticks=0
+        def tick(now):
+            nonlocal ticks
+            ticks+=1
+            if ticks>=2:twice.set()
+        with patch.object(second,'tick',tick):
+            runner=asyncio.create_task(second.run())
+            try:
+                await asyncio.wait_for(twice.wait(),2)
+                self.assertEqual(len(calls),1)
+                self.assertFalse(runner.done())
+                self.assertEqual(self.engine.db.execute("SELECT audio_state FROM events WHERE id='failed'").fetchone()[0],'failed')
+            finally:
+                runner.cancel()
+                await asyncio.gather(runner,return_exceptions=True)
+
+    async def test_old_audio_cleanup_failure_does_not_stop_scheduler(self):
+        key = self.engine.create('hourly', '过期记录', '测试')
+        await asyncio.gather(*list(self.engine.tasks))
+        self.engine.db.execute('UPDATE events SET created=0, expires=0 WHERE id=?', (key,))
+        self.engine.db.commit()
+        second = CareEngine(self.root, self.engine.synthesize, self.client)
+        twice = asyncio.Event()
+        ticks = 0
+        original_tick = second.tick
+        original_unlink = Path.unlink
+
+        def tick(now):
+            nonlocal ticks
+            original_tick(now)
+            ticks += 1
+            if ticks >= 2:
+                twice.set()
+
+        def unlink(path, *args, **kwargs):
+            if path.name == key + '.wav':
+                raise PermissionError('Injected cleanup failure')
+            return original_unlink(path, *args, **kwargs)
+
+        with patch.object(second, 'tick', tick), patch.object(Path, 'unlink', unlink):
+            runner = asyncio.create_task(second.run())
+            try:
+                await asyncio.wait_for(twice.wait(), 2)
+                self.assertFalse(runner.done())
+                self.assertIsNotNone(self.engine.db.execute('SELECT id FROM events WHERE id=?', (key,)).fetchone())
+            finally:
+                runner.cancel()
+                await asyncio.gather(runner, return_exceptions=True)
+
+        self.engine.prune_history()
+        self.assertIsNone(self.engine.db.execute('SELECT id FROM events WHERE id=?', (key,)).fetchone())
+        self.assertFalse((self.root/'artifacts/care-audio'/(key+'.wav')).exists())
+
+    async def test_scheduler_recovers_after_database_write_lock(self):
+        second = CareEngine(self.root, self.engine.synthesize, self.client)
+        second.db.execute('PRAGMA busy_timeout=0')
+        attempted = asyncio.Event()
+        recovered = asyncio.Event()
+        original_tick = second.tick
+        moment = datetime(2026, 10, 24, 13, 0, tzinfo=second.zone)
+        def tick(now):
+            attempted.set()
+            original_tick(moment)
+            recovered.set()
+        self.engine.db.execute('BEGIN IMMEDIATE')
+        with patch.object(second, 'tick', tick):
+            runner = asyncio.create_task(second.run())
+            try:
+                await asyncio.wait_for(attempted.wait(), 1)
+                self.assertFalse(runner.done(), 'Temporary database lock stopped scheduler')
+                self.engine.db.rollback()
+                await asyncio.wait_for(recovered.wait(), 2)
+                await asyncio.gather(*list(second.tasks))
+                rows = self.engine.db.execute("SELECT * FROM events WHERE occurrence='2026-10-24:hourly:13:00'").fetchall()
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]['audio_state'], 'ready')
+            finally:
+                self.engine.db.rollback()
+                runner.cancel()
+                await asyncio.gather(runner, return_exceptions=True)
+
+    async def test_startup_audio_recovery_survives_database_write_lock(self):
+        self.engine.db.execute("INSERT INTO events (id,kind,priority,title,text,created,expires) VALUES ('locked-start','reminder',80,'标题','恢复音频',strftime('%s','now'),9999999999)")
+        self.engine.db.commit()
+        calls = []
+        rendered = asyncio.Event()
+        async def synth(text):
+            calls.append(text)
+            rendered.set()
+            return b'recovered-audio'
+        second = CareEngine(self.root, synth, self.client)
+        second.db.execute('PRAGMA busy_timeout=0')
+        attempted = asyncio.Event()
+        original_rows = second.rows
+        def rows():
+            result = original_rows()
+            attempted.set()
+            return result
+        self.engine.db.execute('BEGIN IMMEDIATE')
+        with patch.object(second, 'rows', rows), patch.object(second, 'tick'):
+            runner = asyncio.create_task(second.run())
+            try:
+                await asyncio.wait_for(attempted.wait(), 1)
+                self.assertFalse(runner.done(), 'Startup database lock stopped scheduler')
+                self.engine.db.rollback()
+                await asyncio.wait_for(rendered.wait(), 2)
+                await asyncio.gather(*list(second.tasks))
+                self.assertEqual(calls, ['恢复音频'])
+                row = self.engine.db.execute("SELECT * FROM events WHERE id='locked-start'").fetchone()
+                self.assertEqual(row['audio_state'], 'ready')
+                self.assertEqual((self.root/'artifacts/care-audio/locked-start.wav').read_bytes(), b'recovered-audio')
+            finally:
+                self.engine.db.rollback()
+                runner.cancel()
+                await asyncio.gather(runner, return_exceptions=True)
+
+    async def test_partial_startup_recovery_does_not_repeat_failed_speech(self):
+        for key in ('first', 'second'):
+            self.engine.db.execute("INSERT INTO events (id,kind,priority,title,text,created,expires) VALUES (?,'reminder',80,'标题',?,strftime('%s','now'),9999999999)", (key, key))
+        self.engine.db.commit()
+        calls = []
+        released = asyncio.Event()
+        completed = asyncio.Event()
+        async def synth(text):
+            calls.append(text)
+            await released.wait()
+            if text == 'first':
+                raise RuntimeError('Injected first-card TTS failure')
+            completed.set()
+            return b'second-audio'
+        second = CareEngine(self.root, synth, self.client)
+        second.db.execute('PRAGMA busy_timeout=0')
+        locked = asyncio.Event()
+        original_notify = second.notify
+        def notify():
+            original_notify()
+            if not locked.is_set():
+                self.engine.db.execute('BEGIN IMMEDIATE')
+                locked.set()
+        with patch.object(second, 'notify', notify), patch.object(second, 'tick'):
+            runner = asyncio.create_task(second.run())
+            try:
+                await asyncio.wait_for(locked.wait(), 1)
+                self.assertFalse(runner.done())
+                self.engine.db.rollback()
+                released.set()
+                await asyncio.wait_for(completed.wait(), 2)
+                await asyncio.gather(*list(second.tasks))
+                self.assertEqual(calls, ['first', 'second'])
+                states = {r['id']: r['audio_state'] for r in self.engine.db.execute('SELECT * FROM events')}
+                self.assertEqual(states, {'first': 'failed', 'second': 'ready'})
+            finally:
+                self.engine.db.rollback()
+                released.set()
+                runner.cancel()
+                await asyncio.gather(runner, return_exceptions=True)
+
+    async def test_history_cleanup_keeps_pending_alerts_and_recent_events(self):
+        expired = self.engine.create('hourly', '过期记录', '测试')
+        pending = self.engine.create('emergency', '待发送记录', '测试')
+        recent = self.engine.create('hourly', '近期记录', '测试')
+        await asyncio.gather(*list(self.engine.tasks))
+        self.engine.db.execute('UPDATE events SET created=0 WHERE id IN (?,?)', (expired, pending))
+        self.engine.db.execute("UPDATE events SET push_state='retry' WHERE id=?", (pending,))
+        self.engine.db.commit()
+        self.engine.prune_history()
+        rows = self.engine.db.execute('SELECT id FROM events').fetchall()
+        self.assertEqual({r['id'] for r in rows}, {pending, recent})
+        for key in (pending, recent):
+            self.assertTrue((self.root/'artifacts/care-audio'/(key+'.wav')).exists())
+        self.assertFalse((self.root/'artifacts/care-audio'/(expired+'.wav')).exists())
 
     def test_commands(self):
         for phrase in ('我跌倒了','救命！','胸口疼','刚刚摔倒了','胸痛'):

@@ -11,6 +11,7 @@ namespace LocalHuman
     public sealed class VRMIntegrationValidation:MonoBehaviour
     {
         const string Dir="/home/yyy/digital-human/artifacts/validation/vrm-stage4";
+        [Serializable] sealed class DefaultVoice { public string label; }
         [Serializable] sealed class Report {
             public bool passed,whiteBackground,softShadow,ui,additive,grounded,mouthReleased,photoEmotionIgnored,eyesReopen;
             public int interactiveGreetings,interactiveGestures;public bool interactionReleased;
@@ -144,7 +145,8 @@ namespace LocalHuman
             report.voiceEnrollment=demo.VoiceName=="我的录入音色";Require(report.voiceEnrollment,"Voice enrollment failed");
             yield return new WaitForSecondsRealtime(.1f);
             Click(panel.ResetVoice);yield return null;while(demo.IsBusy)yield return null;
-            report.voiceReset=demo.VoiceName=="默认女声 · me.wav";Require(report.voiceReset,"Voice reset failed");
+            var expectedVoice=JsonUtility.FromJson<DefaultVoice>(File.ReadAllText("/home/yyy/digital-human/config/voice-default.json")).label;
+            report.voiceReset=demo.VoiceName==expectedVoice;Require(report.voiceReset,"Voice reset failed");
             yield return demo.Recognize(File.ReadAllBytes("/home/yyy/digital-human/assets/reference/me.wav"));
             Require(demo.PlaybackStarts>=starts+2&&string.IsNullOrEmpty(demo.LastPlaybackError),"ASR/TTS failed");
             yield return null;report.ui=panel.IsVisible&&panel.Record.IsInteractable()&&panel.Replay.IsInteractable();Require(report.ui,"UI did not recover after speech");

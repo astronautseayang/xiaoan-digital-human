@@ -4,11 +4,16 @@ Speaker verification rejects a mixed/nonmatching recording; it does not separate
 overlapping voices. Never learn identity from an arbitrary background utterance.
 """
 import json
+import logging
 from pathlib import Path
+import struct
 import subprocess
 import threading
+import uuid
 
 import numpy as np
+
+log = logging.getLogger('human.speaker')
 
 
 class InputRejected(ValueError):
@@ -16,12 +21,43 @@ class InputRejected(ValueError):
 
 
 def clean_audio(data):
+    # A finite WAV data chunk must be fully present. FFmpeg otherwise
+    # tolerates truncation and transcribes only the remaining prefix.
+    # Pipe-produced WAVs may use 0xffffffff for an unknown chunk length.
+    if data[:4] == b'RIFF' and data[8:12] == b'WAVE':
+        offset = 12
+        while offset + 8 <= len(data):
+            chunk = data[offset:offset + 4]
+            size = struct.unpack_from('<I', data, offset + 4)[0]
+            offset += 8
+            if size == 0xffffffff and chunk == b'data':
+                break
+            if size > len(data) - offset:
+                raise InputRejected('录音数据不完整，请重新录制。')
+            if chunk == b'data':
+                break
+            offset += size + (size & 1)
     try:
         result = subprocess.run([
         'ffmpeg', '-hide_banner', '-loglevel', 'error', '-i', 'pipe:0',
-        '-af', 'highpass=f=90,lowpass=f=7400,afftdn=nr=10:nf=-45:tn=1',
-        '-ar', '16000', '-ac', '1', '-t', '30', '-f', 'f32le', 'pipe:1'],
+        # Decode a bounded extra second to detect overlong uploads rather
+        # than silently recognizing/executing only the first 30 seconds.
+        '-ar', '16000', '-ac', '1', '-t', '31', '-f', 'f32le', 'pipe:1'],
             input=data, capture_output=True, timeout=20, check=True)
+        # Check decoded duration before denoising: afftdn may shorten its
+        # output slightly, hiding an upload just over the limit.
+        if len(result.stdout) > 16000 * 30 * 4:
+            raise InputRejected('录音超过30秒，请缩短后重新录制。')
+        frames = len(result.stdout) // 4
+        result = subprocess.run([
+            'ffmpeg', '-hide_banner', '-loglevel', 'error',
+            '-f', 'f32le', '-ar', '16000', '-ac', '1', '-i', 'pipe:0',
+            # Preserve duration across the denoiser's short analysis window;
+            # an exact 5-second enrollment must still meet the lower bound.
+            '-af', ('highpass=f=90,lowpass=f=7400,afftdn=nr=10:nf=-45:tn=1'
+                    f',apad=whole_len={frames},atrim=end_sample={frames}'),
+            '-f', 'f32le', 'pipe:1'],
+            input=result.stdout, capture_output=True, timeout=20, check=True)
     except (subprocess.SubprocessError, OSError) as exc:
         raise InputRejected('录音无法读取，请重新录制清晰语音。') from exc
     audio = np.frombuffer(result.stdout, dtype='<f4').copy()
@@ -50,9 +86,32 @@ class SpeakerInput:
         self.lock = threading.RLock()
 
     def profile(self):
-        if self.path.exists():
-            return json.loads(self.path.read_text())
-        return {'enabled': False, 'embedding': []}
+        try:
+            p = json.loads(self.path.read_text())
+        except FileNotFoundError:
+            return {'enabled': False, 'embedding': []}
+        except (OSError, ValueError) as exc:
+            raise InputRejected('声音识别配置无法读取，请重新录入您的声音。') from exc
+        try:
+            if not isinstance(p, dict) or type(p.get('enabled')) is not bool:
+                raise ValueError()
+            values = p.get('embedding')
+            if not isinstance(values, list) or any(type(v) not in (int, float) for v in values):
+                raise ValueError()
+            vector = np.asarray(values, dtype=np.float32)
+            if vector.ndim != 1 or not np.isfinite(vector).all():
+                raise ValueError()
+            if len(vector) and not 1e-6 < float(np.linalg.norm(vector)) < float('inf'):
+                raise ValueError()
+            if p['enabled'] and not len(vector):
+                raise ValueError()
+            for key, default in (('threshold', .55), ('window_threshold', .45)):
+                value = p.get(key, default)
+                if type(value) not in (int, float) or not 0 < value <= 1:
+                    raise ValueError()
+        except (ValueError, TypeError, OverflowError) as exc:
+            raise InputRejected('声音识别配置损坏，请重新录入您的声音。') from exc
+        return p
 
     def status(self):
         with self.lock:
@@ -62,10 +121,18 @@ class SpeakerInput:
 
     def save(self, profile):
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_suffix('.tmp')
-        temporary.write_text(json.dumps(profile, ensure_ascii=False))
-        temporary.replace(self.path)
-        self.path.chmod(0o600)
+        temporary = self.path.with_suffix('.' + uuid.uuid4().hex + '.tmp')
+        # Establish private permissions before writing biometric data; atomic
+        # replacement carries these permissions to the final profile.
+        temporary.touch(mode=0o600, exist_ok=False)
+        try:
+            temporary.write_text(json.dumps(profile, ensure_ascii=False))
+            temporary.replace(self.path)
+        finally:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                log.warning('Could not remove temporary speaker profile %s', temporary, exc_info=True)
 
     def enable(self, enabled):
         with self.lock:
@@ -124,12 +191,18 @@ class SpeakerInput:
     def prepare(self, data, *, verify=True):
         speech = speech_only(clean_audio(data))
         with self.lock:
-            profile = self.profile()
-            if verify and profile['enabled']:
+            profile = self.profile() if verify else {'enabled': False}
+            if profile['enabled']:
                 if len(speech) < 16000*.8:
                     raise InputRejected('语音太短，暂时不能确认是您的声音，请完整说一句。')
                 reference = np.asarray(profile['embedding'], dtype=np.float32)
-                scores = [float(self.embedding(w) @ reference) for w in self.windows(speech)]
-                if float(self.embedding(speech) @ reference) < profile.get('threshold', .55) or min(scores) < profile.get('window_threshold', .45):
+                reference = reference / np.linalg.norm(reference)
+                def similarity(audio):
+                    vector = self.embedding(audio)
+                    if vector.shape != reference.shape or not np.isfinite(vector).all():
+                        raise InputRejected('声音识别配置与模型不匹配，请重新录入您的声音。')
+                    return float(vector @ reference)
+                scores = [similarity(w) for w in self.windows(speech)]
+                if similarity(speech) < profile.get('threshold', .55) or min(scores) < profile.get('window_threshold', .45):
                     raise InputRejected('声音与录入不匹配，或有其他人说话，请您单独再说一次。')
         return speech

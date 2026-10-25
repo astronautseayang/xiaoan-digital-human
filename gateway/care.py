@@ -33,17 +33,21 @@ class CareEngine:
         path = root / 'artifacts/care.sqlite3'
         path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path)
-        self.db.row_factory = sqlite3.Row
-        self.db.execute('''CREATE TABLE IF NOT EXISTS events (
-            seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE, occurrence TEXT UNIQUE,
-            kind TEXT, priority INTEGER, title TEXT, text TEXT, created REAL, expires REAL,
-            acknowledged INTEGER DEFAULT 0, audio_url TEXT DEFAULT '', audio_state TEXT DEFAULT 'pending',
-            push_state TEXT DEFAULT 'local_only', push_attempts INTEGER DEFAULT 0, next_push REAL DEFAULT 0)''')
-        self.db.commit()
-        reminders.initialize(self.db)
-        self.changed = asyncio.Event()
-        self.version = 0
-        self.tasks = set()
+        try:
+            self.db.row_factory = sqlite3.Row
+            self.db.execute('''CREATE TABLE IF NOT EXISTS events (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE, occurrence TEXT UNIQUE,
+                kind TEXT, priority INTEGER, title TEXT, text TEXT, created REAL, expires REAL,
+                acknowledged INTEGER DEFAULT 0, audio_url TEXT DEFAULT '', audio_state TEXT DEFAULT 'pending',
+                push_state TEXT DEFAULT 'local_only', push_attempts INTEGER DEFAULT 0, next_push REAL DEFAULT 0)''')
+            self.db.commit()
+            reminders.initialize(self.db)
+            self.changed = asyncio.Event()
+            self.version = 0
+            self.tasks = set()
+        except BaseException:
+            self.db.close()
+            raise
 
     def notify(self):
         self.version += 1
@@ -96,7 +100,16 @@ class CareEngine:
             data = await self.synthesize(text)
             audio = self.root / 'artifacts/care-audio'
             audio.mkdir(parents=True, exist_ok=True)
-            (audio / (event_id + '.wav')).write_bytes(data)
+            destination = audio / (event_id + '.wav')
+            temporary = audio / (event_id + '.' + uuid.uuid4().hex + '.tmp')
+            try:
+                temporary.write_bytes(data)
+                temporary.replace(destination)
+            finally:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    log.warning('Could not remove temporary care audio: %s', temporary, exc_info=True)
             self.db.execute("UPDATE events SET audio_url=?,audio_state='ready' WHERE id=?",
                             ('/care-audio/' + event_id + '.wav', event_id))
         except Exception:
@@ -135,22 +148,56 @@ class CareEngine:
             self.db.commit()
             self.notify()
 
+    def prune_history(self):
+        # Keep deduplication history for seven days. A failed file removal
+        # retains its row for retry without stopping reminder delivery.
+        cutoff = time.time()-7*86400
+        old = self.db.execute("SELECT id FROM events WHERE created<? AND push_state NOT IN ('pending','retry')", (cutoff,)).fetchall()
+        for row in old:
+            try:
+                (self.root / 'artifacts/care-audio' / (row['id']+'.wav')).unlink(missing_ok=True)
+            except OSError:
+                log.warning('Could not remove old care audio: %s', row['id'], exc_info=True)
+                continue
+            self.db.execute('DELETE FROM events WHERE id=?', (row['id'],))
+        self.db.commit()
+
     async def run(self):
-        # Recover audio work interrupted by a gateway restart.
-        for row in self.rows():
-            if row['audio_state'] == 'pending':
-                self.spawn(self.render(row['id'], row['text']))
         try:
+            recovering = True
+            recovered_audio = set()
+            next_cleanup = 0
             while True:
-                self.tick(datetime.now(self.zone))
-                await self.push_alerts()
-                # Keep occurrence deduplication bounded while retaining seven days of history.
-                cutoff = time.time()-7*86400
-                old = self.db.execute('SELECT id FROM events WHERE created<? AND push_state NOT IN (\'pending\',\'retry\')', (cutoff,)).fetchall()
-                for row in old:
-                    (self.root / 'artifacts/care-audio' / (row['id']+'.wav')).unlink(missing_ok=True)
-                self.db.execute("DELETE FROM events WHERE created<? AND push_state NOT IN ('pending','retry')", (cutoff,))
-                self.db.commit()
+                try:
+                    if recovering:
+                        # Recover once per active card, including after a
+                        # temporary database error partway through startup.
+                        for row in self.rows():
+                            if row['id'] in recovered_audio:
+                                continue
+                            path = self.root / 'artifacts/care-audio' / (row['id']+'.wav')
+                            try:
+                                available = path.is_file() and path.stat().st_size > 0
+                            except OSError:
+                                available = False
+                            if row['audio_state'] != 'ready' or not available:
+                                self.db.execute("UPDATE events SET audio_state='pending',audio_url='' WHERE id=?", (row['id'],))
+                                self.db.commit()
+                                self.notify()
+                                self.spawn(self.render(row['id'], row['text']))
+                                recovered_audio.add(row['id'])
+                        recovering = False
+                        recovered_audio.clear()
+                    self.tick(datetime.now(self.zone))
+                    await self.push_alerts()
+                    if time.monotonic() >= next_cleanup:
+                        self.prune_history()
+                        next_cleanup = time.monotonic()+60
+                except sqlite3.OperationalError:
+                    # Another local writer or a temporary storage failure
+                    # must not permanently stop reminder scheduling.
+                    self.db.rollback()
+                    log.exception('Care database operation failed; retrying next tick')
                 await asyncio.sleep(1)
         finally:
             for task in list(self.tasks):

@@ -27,9 +27,11 @@ async def chinese_reply(text, rewrite):
         return text
     try:
         result = await rewrite(text)
+        if not isinstance(result, str):
+            raise TypeError('Chinese rewrite must return text')
+        result = common_chinese(result.strip())
     except Exception:
         return '这部分我还没能用中文说明清楚，请您换个问法。'
-    result = common_chinese(result.strip())
     if not result or has_english(result):
         return '这部分我还没能用中文说明清楚，请您换个问法。'
     return result
